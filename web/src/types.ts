@@ -22,3 +22,30 @@ export interface Message {
   tool_id?: string;
   thinking?: boolean;
 }
+
+export interface Skill {
+  name: string;
+  description?: string;
+  dir: string;
+  enabled: boolean;
+}
+
+export interface NamedMD {
+  name: string;
+  description?: string;
+}
+
+export interface MemoryDoc {
+  bytes: number;
+  preview?: string;
+}
+
+export interface ClaudeDirView {
+  source: "own" | "inherited" | "global";
+  source_id?: string;
+  dir: string;
+  skills: Skill[] | null;
+  agents: NamedMD[] | null;
+  commands: NamedMD[] | null;
+  memory?: MemoryDoc;
+}

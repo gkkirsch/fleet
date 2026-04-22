@@ -1,15 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Layers, Paperclip, Send, Workflow } from "lucide-react";
+import { ArrowUpRight, BookOpen, Layers, Paperclip, PanelRight, PanelRightClose, Send, Sparkles, TerminalSquare, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
-import type { Agent, Message } from "./types";
+import type { Agent, ClaudeDirView, Message, NamedMD, Skill } from "./types";
 
 const POLL_MS = 2000;
+const PANEL_STORAGE_KEY = "fleetview-thread-panel-open";
+
+function useThreadPanel() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(PANEL_STORAGE_KEY);
+    return v === null ? true : v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(PANEL_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    toggle: useCallback(() => set(!open), [open, set]),
+    close: useCallback(() => set(false), [set]),
+  };
+}
 
 export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const panel = useThreadPanel();
   // Map of agent id → timestamp of a just-sent message. Used to show the
   // thinking shimmer immediately, before backend polling catches up to the
   // agent entering "streaming" state. Cleared by the effect below.
@@ -86,18 +104,28 @@ export function App() {
   const isPending = selected ? !!pendingSends[selected.id] : false;
 
   return (
-    <div className="h-screen grid grid-cols-[380px_1fr] bg-background text-foreground">
-      <Sidebar
-        agents={agents}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-      />
-      <Detail
+    <div className="h-screen flex bg-background text-foreground">
+      <div className="w-[380px] shrink-0">
+        <Sidebar
+          agents={agents}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <Detail
+          agent={selected}
+          messages={messages}
+          isPending={isPending}
+          onSent={markPending}
+          onBack={() => setSelectedId(null)}
+          panelOpen={panel.open}
+          onTogglePanel={panel.toggle}
+        />
+      </div>
+      <ThreadPanel
         agent={selected}
-        messages={messages}
-        isPending={isPending}
-        onSent={markPending}
-        onBack={() => setSelectedId(null)}
+        open={panel.open}
       />
     </div>
   );
@@ -299,30 +327,43 @@ function Detail({
   isPending,
   onSent,
   onBack,
+  panelOpen,
+  onTogglePanel,
 }: {
   agent: Agent | null;
   messages: Message[];
   isPending: boolean;
   onSent: (id: string) => void;
   onBack: () => void;
+  panelOpen: boolean;
+  onTogglePanel: () => void;
 }) {
   if (!agent) {
     return (
-      <div className="flex items-center justify-center text-muted-foreground text-sm italic">
+      <div className="flex items-center justify-center text-muted-foreground text-sm italic h-full">
         select one
       </div>
     );
   }
   return (
     <section className="flex flex-col h-full min-h-0">
-      <TopNav onBack={onBack} />
+      <TopNav onBack={onBack} panelOpen={panelOpen} onTogglePanel={onTogglePanel} />
       <MessageStream agent={agent} messages={messages} isPending={isPending} />
       <NotifyBox agentId={agent.id} onSent={onSent} />
     </section>
   );
 }
 
-function TopNav({ onBack }: { onBack: () => void }) {
+function TopNav({
+  onBack,
+  panelOpen,
+  onTogglePanel,
+}: {
+  onBack: () => void;
+  panelOpen: boolean;
+  onTogglePanel: () => void;
+}) {
+  const Icon = panelOpen ? PanelRightClose : PanelRight;
   return (
     <div className="flex items-center justify-between px-10 pt-8 pb-2">
       <button
@@ -332,9 +373,15 @@ function TopNav({ onBack }: { onBack: () => void }) {
       >
         Back
       </button>
-      <span className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-        Thread
-      </span>
+      <button
+        type="button"
+        onClick={onTogglePanel}
+        title={panelOpen ? "Hide thread panel" : "Show thread panel"}
+        className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+      >
+        <span>Thread</span>
+        <Icon className="w-3.5 h-3.5" strokeWidth={1.8} />
+      </button>
     </div>
   );
 }
@@ -531,4 +578,217 @@ function NotifyBox({
       </div>
     </div>
   );
+}
+
+// ─── thread panel ────────────────────────────────────────────────
+
+function ThreadPanel({
+  agent,
+  open,
+}: {
+  agent: Agent | null;
+  open: boolean;
+}) {
+  const [data, setData] = useState<ClaudeDirView | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || !agent) {
+      setData(null);
+      return;
+    }
+    let stop = false;
+    setLoading(true);
+    fetch(`/api/agents/${agent.id}/claude`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ClaudeDirView | null) => {
+        if (stop) return;
+        setData(d);
+      })
+      .catch(() => {})
+      .finally(() => !stop && setLoading(false));
+    return () => {
+      stop = true;
+    };
+  }, [agent?.id, open]);
+
+  return (
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-sidebar h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[340px] xl:w-[380px]" : "w-0 border-l-0"
+      )}
+    >
+      {open && (
+        <div className="h-full flex flex-col">
+          <PanelHeader agent={agent} view={data} />
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {!agent && (
+              <p className="px-8 py-6 text-sm italic text-muted-foreground">
+                select an agent
+              </p>
+            )}
+            {agent && loading && !data && (
+              <p className="px-8 py-6 text-sm italic text-muted-foreground">
+                scanning…
+              </p>
+            )}
+            {agent && data && <PanelBody view={data} />}
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function PanelHeader({
+  agent,
+  view,
+}: {
+  agent: Agent | null;
+  view: ClaudeDirView | null;
+}) {
+  const sourceLabel = !view
+    ? ""
+    : view.source === "own"
+      ? "own .claude"
+      : view.source === "inherited"
+        ? `inherited · ${view.source_id}`
+        : "global ~/.claude";
+  return (
+    <div className="px-8 pt-10 pb-5 border-b border-border/50">
+      <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+        Installed
+      </div>
+      <div className="mt-1 font-[family-name:var(--font-heading)] text-[28px] leading-[1] tracking-tight text-foreground">
+        {agent?.id ?? "—"}
+      </div>
+      {sourceLabel && (
+        <div className="mt-2 text-[11px] text-muted-foreground font-mono truncate">
+          {sourceLabel}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PanelBody({ view }: { view: ClaudeDirView }) {
+  const skills = view.skills ?? [];
+  const agents = view.agents ?? [];
+  const commands = view.commands ?? [];
+  const anything =
+    skills.length + agents.length + commands.length > 0 || !!view.memory;
+  return (
+    <div className="px-8 py-6 space-y-9">
+      {!anything && (
+        <p className="text-sm italic text-muted-foreground">
+          nothing installed yet
+        </p>
+      )}
+      {skills.length > 0 && (
+        <Section icon={Sparkles} label="Skills" count={skills.length}>
+          {skills.map((s) => (
+            <SkillRow key={s.name} skill={s} />
+          ))}
+        </Section>
+      )}
+      {agents.length > 0 && (
+        <Section icon={Users} label="Agents" count={agents.length}>
+          {agents.map((a) => (
+            <NamedRow key={a.name} item={a} />
+          ))}
+        </Section>
+      )}
+      {commands.length > 0 && (
+        <Section icon={TerminalSquare} label="Commands" count={commands.length}>
+          {commands.map((c) => (
+            <NamedRow key={c.name} item={c} />
+          ))}
+        </Section>
+      )}
+      {view.memory && (
+        <Section icon={BookOpen} label="Memory">
+          <div className="text-[13px] leading-relaxed text-foreground/90">
+            {view.memory.preview ||
+              <span className="italic text-muted-foreground">empty</span>}
+          </div>
+          <div className="mt-2 text-[10px] text-muted-foreground font-mono tabular-nums">
+            CLAUDE.md · {formatBytes(view.memory.bytes)}
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function Section({
+  icon: Icon,
+  label,
+  count,
+  children,
+}: {
+  icon: typeof Workflow;
+  label: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-3">
+        <Icon
+          className="text-muted-foreground"
+          size={13}
+          strokeWidth={1.8}
+        />
+        <span className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+          {label}
+        </span>
+        {typeof count === "number" && (
+          <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
+            · {count}
+          </span>
+        )}
+      </div>
+      <div className="space-y-3">{children}</div>
+    </section>
+  );
+}
+
+function SkillRow({ skill }: { skill: Skill }) {
+  return (
+    <div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-[13px] font-medium text-foreground">{skill.name}</span>
+        {!skill.enabled && (
+          <span className="text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+            disabled
+          </span>
+        )}
+      </div>
+      {skill.description && (
+        <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground line-clamp-3">
+          {skill.description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function NamedRow({ item }: { item: NamedMD }) {
+  return (
+    <div>
+      <div className="text-[13px] font-medium text-foreground">{item.name}</div>
+      {item.description && (
+        <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground line-clamp-2">
+          {item.description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
