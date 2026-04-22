@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, BookOpen, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BookOpen, ChevronRight, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
 import type { Agent, ClaudeDirView, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
@@ -582,6 +582,8 @@ function NotifyBox({
 
 // ─── thread panel ────────────────────────────────────────────────
 
+type PanelRoute = "home" | "marketplace";
+
 function ThreadPanel({
   agent,
   open,
@@ -592,6 +594,12 @@ function ThreadPanel({
   const [data, setData] = useState<ClaudeDirView | null>(null);
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [route, setRoute] = useState<PanelRoute>("home");
+
+  // Reset to home whenever the selected agent changes.
+  useEffect(() => {
+    setRoute("home");
+  }, [agent?.id]);
 
   const load = useCallback(() => {
     if (!agent) return;
@@ -658,7 +666,7 @@ function ThreadPanel({
     >
       {open && (
         <div className="h-full flex flex-col">
-          <PanelHeader agent={agent} view={data} />
+          <PanelHeader agent={agent} view={data} route={route} />
           <div className="flex-1 min-h-0 overflow-y-auto">
             {!agent && (
               <p className="px-8 py-6 text-sm italic text-muted-foreground">
@@ -670,11 +678,15 @@ function ThreadPanel({
                 scanning…
               </p>
             )}
-            {agent && data && (
-              <PanelBody
+            {agent && data && route === "home" && (
+              <HomeView view={data} onBrowse={() => setRoute("marketplace")} />
+            )}
+            {agent && data && route === "marketplace" && (
+              <MarketplaceView
                 view={data}
                 installing={installing}
                 onInstall={install}
+                onBack={() => setRoute("home")}
               />
             )}
           </div>
@@ -687,9 +699,11 @@ function ThreadPanel({
 function PanelHeader({
   agent,
   view,
+  route,
 }: {
   agent: Agent | null;
   view: ClaudeDirView | null;
+  route: PanelRoute;
 }) {
   const sourceLabel = !view
     ? ""
@@ -698,10 +712,11 @@ function PanelHeader({
       : view.source === "inherited"
         ? `inherited · ${view.source_id}`
         : "global ~/.claude";
+  const crumb = route === "home" ? "Installed" : "Installed · Marketplace";
   return (
     <div className="px-8 pt-10 pb-5 border-b border-border/50">
       <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-        Installed
+        {crumb}
       </div>
       <div className="mt-1 font-[family-name:var(--font-heading)] text-[28px] leading-[1] tracking-tight text-foreground">
         {agent?.id ?? "—"}
@@ -715,29 +730,38 @@ function PanelHeader({
   );
 }
 
-function PanelBody({
+function HomeView({
   view,
-  installing,
-  onInstall,
+  onBrowse,
 }: {
   view: ClaudeDirView;
-  installing: Set<string>;
-  onInstall: (plugin: string, marketplace: string) => void;
+  onBrowse: () => void;
 }) {
   const skills = view.skills ?? [];
   const agents = view.agents ?? [];
   const commands = view.commands ?? [];
   const plugins = view.plugins ?? [];
   const markets = view.marketplaces ?? [];
-  const anything =
-    skills.length + agents.length + commands.length + plugins.length + markets.length > 0 ||
+  const availableCount = markets.reduce(
+    (acc, m) => acc + m.plugins.filter((p) => !p.installed).length,
+    0
+  );
+  const anythingInstalled =
+    skills.length + agents.length + commands.length + plugins.length > 0 ||
     !!view.memory;
   return (
     <div className="px-8 py-6 space-y-9">
-      {!anything && (
+      {!anythingInstalled && markets.length === 0 && (
         <p className="text-sm italic text-muted-foreground">
           nothing installed yet
         </p>
+      )}
+      {markets.length > 0 && (
+        <BrowseEntry
+          totalAvailable={availableCount}
+          totalPlugins={markets.reduce((acc, m) => acc + m.plugins.length, 0)}
+          onClick={onBrowse}
+        />
       )}
       {plugins.length > 0 && (
         <Section icon={Package} label="Plugins" count={plugins.length}>
@@ -767,11 +791,46 @@ function PanelBody({
           ))}
         </Section>
       )}
+      {view.memory && (
+        <Section icon={BookOpen} label="Memory">
+          <div className="text-[13px] leading-relaxed text-foreground/90">
+            {view.memory.preview ||
+              <span className="italic text-muted-foreground">empty</span>}
+          </div>
+          <div className="mt-2 text-[10px] text-muted-foreground font-mono tabular-nums">
+            CLAUDE.md · {formatBytes(view.memory.bytes)}
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function MarketplaceView({
+  view,
+  installing,
+  onInstall,
+  onBack,
+}: {
+  view: ClaudeDirView;
+  installing: Set<string>;
+  onInstall: (plugin: string, marketplace: string) => void;
+  onBack: () => void;
+}) {
+  const markets = view.marketplaces ?? [];
+  return (
+    <div className="px-8 py-6 space-y-9">
+      <BackCrumb label="Installed" onClick={onBack} />
+      {markets.length === 0 && (
+        <p className="text-sm italic text-muted-foreground">
+          no marketplaces registered
+        </p>
+      )}
       {markets.map((m) => (
         <Section
           key={m.name}
           icon={Store}
-          label={`Marketplace · ${m.name}`}
+          label={m.name}
           count={m.plugins.length}
         >
           {m.plugins.map((mp) => (
@@ -785,18 +844,59 @@ function PanelBody({
           ))}
         </Section>
       ))}
-      {view.memory && (
-        <Section icon={BookOpen} label="Memory">
-          <div className="text-[13px] leading-relaxed text-foreground/90">
-            {view.memory.preview ||
-              <span className="italic text-muted-foreground">empty</span>}
-          </div>
-          <div className="mt-2 text-[10px] text-muted-foreground font-mono tabular-nums">
-            CLAUDE.md · {formatBytes(view.memory.bytes)}
-          </div>
-        </Section>
-      )}
     </div>
+  );
+}
+
+function BrowseEntry({
+  totalAvailable,
+  totalPlugins,
+  onClick,
+}: {
+  totalAvailable: number;
+  totalPlugins: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group w-full flex items-center gap-3 px-3.5 py-3 rounded-xl bg-background ring-1 ring-border/60 hover:ring-border transition-colors text-left"
+    >
+      <div className="shrink-0 w-8 h-8 rounded-lg bg-[color:var(--matcha-soft)] flex items-center justify-center">
+        <Store
+          className="text-[color:var(--primary)]"
+          size={14}
+          strokeWidth={1.8}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-medium text-foreground">
+          Marketplace
+        </div>
+        <div className="text-[11px] text-muted-foreground font-mono">
+          {totalAvailable} available · {totalPlugins} total
+        </div>
+      </div>
+      <ChevronRight
+        className="shrink-0 text-muted-foreground group-hover:text-foreground transition-colors"
+        size={14}
+        strokeWidth={1.8}
+      />
+    </button>
+  );
+}
+
+function BackCrumb({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-1.5 -ml-0.5 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+    >
+      <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.8} />
+      {label}
+    </button>
   );
 }
 
