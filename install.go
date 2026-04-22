@@ -1,11 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -14,14 +15,17 @@ import (
 type installReq struct {
 	Plugin      string `json:"plugin"`
 	Marketplace string `json:"marketplace"`
-	// Source URL or GitHub slug. Only used if the marketplace isn't
-	// already registered. Skip for marketplaces the agent already has.
+	// Source URL/GitHub slug. Only used if marketplace isn't registered.
 	Source string `json:"source,omitempty"`
-	// When true, restart claude (kill + roster resume) after the install
-	// lands so the new plugin is picked up on boot.
+	// Restart claude (kill + roster resume) after install so the running
+	// agent picks up the new plugin. Without this the plugin is installed
+	// to disk but won't load until the next spawn.
 	Restart bool `json:"restart,omitempty"`
 }
 
+// handleInstallPlugin runs `claude plugin install` directly against the
+// agent's isolated CLAUDE_CONFIG_DIR. No TUI interaction — Claude Code's
+// CLI writes installed_plugins.json itself. Optionally restarts the agent.
 func handleInstallPlugin(w http.ResponseWriter, r *http.Request, id string) {
 	var body installReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -33,7 +37,6 @@ func handleInstallPlugin(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	// Find the agent so we know its target.
 	all, err := loadAllAgents()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -46,57 +49,74 @@ func handleInstallPlugin(w http.ResponseWriter, r *http.Request, id string) {
 			break
 		}
 	}
-	if a == nil || a.Target == "" {
-		http.Error(w, "no live target for agent", http.StatusNotFound)
+	if a == nil {
+		http.Error(w, "no such agent", http.StatusNotFound)
+		return
+	}
+	dir, _, _ := effectiveClaudeDir(*a, all)
+	if dir == "" {
+		http.Error(w, "no CLAUDE_CONFIG_DIR for agent", http.StatusBadRequest)
 		return
 	}
 
-	// Compose the commands to paste. Each goes in on its own via amux paste
-	// --submit so claude's TUI slash-command handler sees it cleanly.
-	var cmds []string
-	if body.Source != "" {
-		cmds = append(cmds, fmt.Sprintf("/plugin marketplace add %s", body.Source))
-	}
-	cmds = append(cmds, fmt.Sprintf("/plugin install %s@%s", body.Plugin, body.Marketplace))
+	env := append(os.Environ(), "CLAUDE_CONFIG_DIR="+dir)
 
-	for i, c := range cmds {
-		if err := amuxPasteSubmit(a.Target, c); err != nil {
-			http.Error(w, fmt.Sprintf("paste %d: %v", i, err), http.StatusInternalServerError)
+	var outputs []string
+	runClaude := func(args ...string) error {
+		cmd := exec.Command("claude", args...)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		outputs = append(outputs, fmt.Sprintf("$ claude %s\n%s", strings.Join(args, " "), strings.TrimSpace(string(out))))
+		if err != nil {
+			return fmt.Errorf("%v — %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+
+	// If the marketplace isn't registered in this dir yet, add it first.
+	if body.Source != "" && !marketplaceRegistered(dir, body.Marketplace) {
+		if err := runClaude("plugin", "marketplace", "add", body.Source); err != nil {
+			http.Error(w, fmt.Sprintf("marketplace add: %v", err), http.StatusInternalServerError)
 			return
 		}
-		// Give claude a moment to process before pushing the next line.
-		time.Sleep(800 * time.Millisecond)
 	}
 
-	if body.Restart {
+	spec := fmt.Sprintf("%s@%s", body.Plugin, body.Marketplace)
+	if err := runClaude("plugin", "install", spec); err != nil {
+		http.Error(w, fmt.Sprintf("install: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if body.Restart && a.Target != "" {
 		go restartAgent(id, a.Target)
 	}
 
 	writeJSON(w, map[string]any{
-		"status":  "sent",
-		"commands": cmds,
-		"restart":  body.Restart,
+		"status":  "installed",
+		"plugin":  spec,
+		"output":  outputs,
+		"restart": body.Restart,
 	})
 }
 
-// amuxPasteSubmit pipes text into `amux paste <target> --submit`.
-func amuxPasteSubmit(target, text string) error {
-	cmd := exec.Command(amuxBin, "paste", target, "--submit")
-	cmd.Stdin = strings.NewReader(text)
-	var errb bytes.Buffer
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s: %s", err, strings.TrimSpace(errb.String()))
+// marketplaceRegistered checks if plugins/marketplaces/<name>(.json?) exists
+// — i.e. the dir has already seen this marketplace.
+func marketplaceRegistered(dir, name string) bool {
+	for _, cand := range []string{
+		filepath.Join(dir, "plugins", "marketplaces", name),
+		filepath.Join(dir, "plugins", "marketplaces", name+".json"),
+	} {
+		if _, err := os.Stat(cand); err == nil {
+			return true
+		}
 	}
-	return nil
+	return false
 }
 
-// restartAgent kills the target window and resumes the roster agent so
-// claude re-reads installed_plugins.json. Runs async; errors log to stderr
-// only — the UI can repoll and see the new state.
+// restartAgent kills the amux window and re-spawns via roster resume so
+// claude reads the fresh installed_plugins.json on boot.
 func restartAgent(id, target string) {
-	// Small delay to let the install finish writing files.
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 	_ = exec.Command(amuxBin, "kill", target).Run()
 	time.Sleep(500 * time.Millisecond)
 	_ = exec.Command(rosterBin, "resume", id).Run()
