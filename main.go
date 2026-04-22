@@ -442,6 +442,12 @@ func router() http.Handler {
 				return
 			}
 			handleClaude(w, r, id)
+		case "plugins/install":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			handleInstallPlugin(w, r, id)
 		default:
 			http.Error(w, "unknown subresource", http.StatusNotFound)
 		}

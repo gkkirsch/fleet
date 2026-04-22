@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, BookOpen, Layers, Paperclip, PanelRight, PanelRightClose, Send, Sparkles, TerminalSquare, Users, Workflow } from "lucide-react";
+import { ArrowUpRight, BookOpen, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
-import type { Agent, ClaudeDirView, Message, NamedMD, Skill } from "./types";
+import type { Agent, ClaudeDirView, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
 
 const POLL_MS = 2000;
 const PANEL_STORAGE_KEY = "fleetview-thread-panel-open";
@@ -591,6 +591,15 @@ function ThreadPanel({
 }) {
   const [data, setData] = useState<ClaudeDirView | null>(null);
   const [loading, setLoading] = useState(false);
+  const [installing, setInstalling] = useState<Set<string>>(new Set());
+
+  const load = useCallback(() => {
+    if (!agent) return;
+    fetch(`/api/agents/${agent.id}/claude`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ClaudeDirView | null) => setData(d))
+      .catch(() => {});
+  }, [agent?.id]);
 
   useEffect(() => {
     if (!open || !agent) {
@@ -599,18 +608,46 @@ function ThreadPanel({
     }
     let stop = false;
     setLoading(true);
-    fetch(`/api/agents/${agent.id}/claude`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: ClaudeDirView | null) => {
-        if (stop) return;
-        setData(d);
-      })
-      .catch(() => {})
-      .finally(() => !stop && setLoading(false));
+    load();
+    setLoading(false);
+    // Light refresh so newly-installed plugins appear within a few seconds.
+    const h = setInterval(() => {
+      if (!stop) load();
+    }, 4000);
     return () => {
       stop = true;
+      clearInterval(h);
     };
-  }, [agent?.id, open]);
+  }, [agent?.id, open, load]);
+
+  const install = useCallback(
+    async (pluginName: string, marketplace: string) => {
+      if (!agent) return;
+      const key = `${pluginName}@${marketplace}`;
+      setInstalling((s) => new Set(s).add(key));
+      try {
+        await fetch(`/api/agents/${agent.id}/plugins/install`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plugin: pluginName,
+            marketplace,
+            restart: true,
+          }),
+        });
+      } finally {
+        // Clear after a minute — the poll above picks up the real state.
+        setTimeout(() => {
+          setInstalling((s) => {
+            const n = new Set(s);
+            n.delete(key);
+            return n;
+          });
+        }, 60_000);
+      }
+    },
+    [agent]
+  );
 
   return (
     <aside
@@ -633,7 +670,13 @@ function ThreadPanel({
                 scanning…
               </p>
             )}
-            {agent && data && <PanelBody view={data} />}
+            {agent && data && (
+              <PanelBody
+                view={data}
+                installing={installing}
+                onInstall={install}
+              />
+            )}
           </div>
         </div>
       )}
@@ -672,18 +715,36 @@ function PanelHeader({
   );
 }
 
-function PanelBody({ view }: { view: ClaudeDirView }) {
+function PanelBody({
+  view,
+  installing,
+  onInstall,
+}: {
+  view: ClaudeDirView;
+  installing: Set<string>;
+  onInstall: (plugin: string, marketplace: string) => void;
+}) {
   const skills = view.skills ?? [];
   const agents = view.agents ?? [];
   const commands = view.commands ?? [];
+  const plugins = view.plugins ?? [];
+  const markets = view.marketplaces ?? [];
   const anything =
-    skills.length + agents.length + commands.length > 0 || !!view.memory;
+    skills.length + agents.length + commands.length + plugins.length + markets.length > 0 ||
+    !!view.memory;
   return (
     <div className="px-8 py-6 space-y-9">
       {!anything && (
         <p className="text-sm italic text-muted-foreground">
           nothing installed yet
         </p>
+      )}
+      {plugins.length > 0 && (
+        <Section icon={Package} label="Plugins" count={plugins.length}>
+          {plugins.map((p) => (
+            <PluginRow key={`${p.name}@${p.marketplace}`} plugin={p} />
+          ))}
+        </Section>
       )}
       {skills.length > 0 && (
         <Section icon={Sparkles} label="Skills" count={skills.length}>
@@ -706,6 +767,24 @@ function PanelBody({ view }: { view: ClaudeDirView }) {
           ))}
         </Section>
       )}
+      {markets.map((m) => (
+        <Section
+          key={m.name}
+          icon={Store}
+          label={`Marketplace · ${m.name}`}
+          count={m.plugins.length}
+        >
+          {m.plugins.map((mp) => (
+            <MarketRow
+              key={mp.name}
+              plugin={mp}
+              marketplace={m.name}
+              installing={installing.has(`${mp.name}@${m.name}`)}
+              onInstall={onInstall}
+            />
+          ))}
+        </Section>
+      ))}
       {view.memory && (
         <Section icon={BookOpen} label="Memory">
           <div className="text-[13px] leading-relaxed text-foreground/90">
@@ -716,6 +795,75 @@ function PanelBody({ view }: { view: ClaudeDirView }) {
             CLAUDE.md · {formatBytes(view.memory.bytes)}
           </div>
         </Section>
+      )}
+    </div>
+  );
+}
+
+function PluginRow({ plugin }: { plugin: Plugin }) {
+  return (
+    <div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-[13px] font-medium text-foreground">{plugin.name}</span>
+        {!plugin.enabled && (
+          <span className="text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+            disabled
+          </span>
+        )}
+      </div>
+      <div className="mt-0.5 text-[10px] text-muted-foreground font-mono truncate">
+        {plugin.marketplace}
+        {plugin.version ? ` · v${plugin.version}` : ""}
+      </div>
+      {plugin.description && (
+        <p className="mt-1 text-[12px] leading-snug text-muted-foreground line-clamp-3">
+          {plugin.description}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function MarketRow({
+  plugin,
+  marketplace,
+  installing,
+  onInstall,
+}: {
+  plugin: MarketPlugin;
+  marketplace: string;
+  installing: boolean;
+  onInstall: (plugin: string, marketplace: string) => void;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-medium text-foreground">{plugin.name}</div>
+        {plugin.description && (
+          <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground line-clamp-2">
+            {plugin.description}
+          </p>
+        )}
+      </div>
+      {plugin.installed ? (
+        <span className="shrink-0 text-[9px] tracking-[0.22em] uppercase text-muted-foreground pt-1">
+          installed
+        </span>
+      ) : (
+        <button
+          type="button"
+          disabled={installing}
+          onClick={() => onInstall(plugin.name, marketplace)}
+          title={installing ? "installing…" : `Install ${plugin.name}`}
+          className="shrink-0 flex items-center gap-1 h-6 px-2 rounded-md bg-background ring-1 ring-border/70 hover:ring-border transition text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-foreground disabled:opacity-40"
+        >
+          {installing ? "…" : (
+            <>
+              <Plus className="w-3 h-3" strokeWidth={1.8} />
+              Install
+            </>
+          )}
+        </button>
       )}
     </div>
   );

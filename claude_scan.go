@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,13 +13,15 @@ import (
 // Source records which agent (if any) actually owns the dir — so the UI
 // can show "inherited from <orch>" or "global" where appropriate.
 type ClaudeDirView struct {
-	Source     string     `json:"source"` // "own" | "inherited" | "global"
-	SourceID   string     `json:"source_id,omitempty"`
-	Dir        string     `json:"dir"`
-	Skills     []Skill    `json:"skills"`
-	Agents     []NamedMD  `json:"agents"`
-	Commands   []NamedMD  `json:"commands"`
-	Memory     *MemoryDoc `json:"memory,omitempty"`
+	Source       string        `json:"source"` // "own" | "inherited" | "global"
+	SourceID     string        `json:"source_id,omitempty"`
+	Dir          string        `json:"dir"`
+	Skills       []Skill       `json:"skills"`
+	Agents       []NamedMD     `json:"agents"`
+	Commands     []NamedMD     `json:"commands"`
+	Plugins      []Plugin      `json:"plugins"`
+	Marketplaces []Marketplace `json:"marketplaces"`
+	Memory       *MemoryDoc    `json:"memory,omitempty"`
 }
 
 type Skill struct {
@@ -36,6 +39,31 @@ type NamedMD struct {
 type MemoryDoc struct {
 	Bytes   int64  `json:"bytes"`
 	Preview string `json:"preview,omitempty"`
+}
+
+// Plugin is a plugin already installed in the agent's .claude dir.
+type Plugin struct {
+	Name        string `json:"name"`
+	Marketplace string `json:"marketplace"`
+	Version     string `json:"version,omitempty"`
+	Description string `json:"description,omitempty"`
+	Author      string `json:"author,omitempty"`
+	Enabled     bool   `json:"enabled"`
+}
+
+// Marketplace lists plugins a user could install. Space-isolated: we only
+// surface marketplaces that are registered in THIS agent's .claude dir.
+type Marketplace struct {
+	Name    string         `json:"name"`
+	Source  string         `json:"source,omitempty"`
+	Plugins []MarketPlugin `json:"plugins"`
+}
+
+type MarketPlugin struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category,omitempty"`
+	Installed   bool   `json:"installed"`
 }
 
 // effectiveClaudeDir mirrors roster's claudeDirFor: orchestrators own a
@@ -94,12 +122,201 @@ func findOrchAncestor(startID string, all []Agent) string {
 
 // --- scanning --------------------------------------------------------------
 
-func scanClaudeDir(dir string) (skills []Skill, agents, commands []NamedMD, memory *MemoryDoc) {
+func scanClaudeDir(dir string) (skills []Skill, agents, commands []NamedMD, plugins []Plugin, markets []Marketplace, memory *MemoryDoc) {
 	skills = scanSkills(filepath.Join(dir, "skills"))
 	agents = scanMDFolder(filepath.Join(dir, "agents"))
 	commands = scanMDFolder(filepath.Join(dir, "commands"))
+	plugins = scanInstalledPlugins(dir)
+	markets = scanMarketplaces(dir, plugins)
 	memory = readMemory(filepath.Join(dir, "CLAUDE.md"))
 	return
+}
+
+// --- plugins ---------------------------------------------------------------
+
+// scanInstalledPlugins reads installed_plugins.json + settings.json in dir.
+// Returns entries with plugin.json-derived description/author when present.
+func scanInstalledPlugins(dir string) []Plugin {
+	ipPath := filepath.Join(dir, "plugins", "installed_plugins.json")
+	b, err := os.ReadFile(ipPath)
+	if err != nil {
+		return nil
+	}
+	var ip struct {
+		Plugins map[string][]struct {
+			InstallPath string `json:"installPath"`
+			Version     string `json:"version"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(b, &ip); err != nil {
+		return nil
+	}
+	enabled := readEnabledPlugins(dir)
+	var out []Plugin
+	for key, entries := range ip.Plugins {
+		if len(entries) == 0 {
+			continue
+		}
+		name, marketplace := splitPluginKey(key)
+		p := Plugin{
+			Name:        name,
+			Marketplace: marketplace,
+			Version:     entries[0].Version,
+			Enabled:     enabled[key],
+		}
+		if meta := readPluginManifest(entries[0].InstallPath); meta != nil {
+			p.Description = meta.Description
+			p.Author = meta.AuthorName
+		}
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Enabled != out[j].Enabled {
+			return out[i].Enabled
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
+// splitPluginKey parses "name@marketplace" (marketplace may contain @).
+func splitPluginKey(key string) (name, marketplace string) {
+	i := strings.LastIndex(key, "@")
+	if i <= 0 {
+		return key, ""
+	}
+	return key[:i], key[i+1:]
+}
+
+// readEnabledPlugins returns the {"name@mp": true} map from settings.json.
+func readEnabledPlugins(dir string) map[string]bool {
+	out := map[string]bool{}
+	b, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		return out
+	}
+	var s struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return out
+	}
+	for k, v := range s.EnabledPlugins {
+		out[k] = v
+	}
+	return out
+}
+
+type pluginManifest struct {
+	Description string
+	AuthorName  string
+}
+
+func readPluginManifest(installPath string) *pluginManifest {
+	if installPath == "" {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(installPath, ".claude-plugin", "plugin.json"))
+	if err != nil {
+		return nil
+	}
+	var m struct {
+		Description string `json:"description"`
+		Author      struct {
+			Name string `json:"name"`
+		} `json:"author"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	return &pluginManifest{Description: m.Description, AuthorName: m.Author.Name}
+}
+
+// scanMarketplaces walks plugins/marketplaces/ and returns each registered
+// marketplace with its advertised plugins. Claude Code stores these either
+// as a cloned repo directory (with .claude-plugin/marketplace.json inside)
+// OR as a flat JSON file named for the marketplace — we accept both.
+func scanMarketplaces(dir string, installed []Plugin) []Marketplace {
+	mpDir := filepath.Join(dir, "plugins", "marketplaces")
+	entries, err := os.ReadDir(mpDir)
+	if err != nil {
+		return nil
+	}
+	installedKey := map[string]bool{}
+	for _, p := range installed {
+		installedKey[p.Name+"@"+p.Marketplace] = true
+	}
+	var out []Marketplace
+	for _, e := range entries {
+		name := strings.TrimSuffix(e.Name(), ".json")
+		mp := loadMarketplace(filepath.Join(mpDir, e.Name()), name, e.IsDir(), installedKey)
+		if mp != nil {
+			out = append(out, *mp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func loadMarketplace(path, name string, isDir bool, installedKey map[string]bool) *Marketplace {
+	var raw []byte
+	if isDir {
+		for _, cand := range []string{
+			filepath.Join(path, ".claude-plugin", "marketplace.json"),
+			filepath.Join(path, "marketplace.json"),
+		} {
+			if b, err := os.ReadFile(cand); err == nil {
+				raw = b
+				break
+			}
+		}
+	} else {
+		if b, err := os.ReadFile(path); err == nil {
+			raw = b
+		}
+	}
+	if raw == nil {
+		return nil
+	}
+	var m struct {
+		Name    string `json:"name"`
+		Source  any    `json:"source"`
+		Plugins []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Category    string `json:"category"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	displayName := m.Name
+	if displayName == "" {
+		displayName = name
+	}
+	out := &Marketplace{Name: displayName, Source: sourceToString(m.Source)}
+	for _, p := range m.Plugins {
+		out.Plugins = append(out.Plugins, MarketPlugin{
+			Name:        p.Name,
+			Description: p.Description,
+			Category:    p.Category,
+			Installed:   installedKey[p.Name+"@"+name],
+		})
+	}
+	sort.Slice(out.Plugins, func(i, j int) bool { return out.Plugins[i].Name < out.Plugins[j].Name })
+	return out
+}
+
+func sourceToString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case map[string]any:
+		if u, ok := x["url"].(string); ok {
+			return u
+		}
+	}
+	return ""
 }
 
 // scanSkills looks for skill directories, each containing SKILL.md (or
@@ -250,14 +467,16 @@ func handleClaude(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	dir, source, sourceID := effectiveClaudeDir(*a, all)
-	skills, agents, commands, memory := scanClaudeDir(dir)
+	skills, agents, commands, plugins, markets, memory := scanClaudeDir(dir)
 	writeJSON(w, ClaudeDirView{
-		Source:   source,
-		SourceID: sourceID,
-		Dir:      dir,
-		Skills:   skills,
-		Agents:   agents,
-		Commands: commands,
-		Memory:   memory,
+		Source:       source,
+		SourceID:     sourceID,
+		Dir:          dir,
+		Skills:       skills,
+		Agents:       agents,
+		Commands:     commands,
+		Plugins:      plugins,
+		Marketplaces: markets,
+		Memory:       memory,
 	})
 }

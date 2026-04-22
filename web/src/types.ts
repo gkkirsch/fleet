@@ -40,6 +40,28 @@ export interface MemoryDoc {
   preview?: string;
 }
 
+export interface Plugin {
+  name: string;
+  marketplace: string;
+  version?: string;
+  description?: string;
+  author?: string;
+  enabled: boolean;
+}
+
+export interface MarketPlugin {
+  name: string;
+  description?: string;
+  category?: string;
+  installed: boolean;
+}
+
+export interface Marketplace {
+  name: string;
+  source?: string;
+  plugins: MarketPlugin[];
+}
+
 export interface ClaudeDirView {
   source: "own" | "inherited" | "global";
   source_id?: string;
@@ -47,5 +69,7 @@ export interface ClaudeDirView {
   skills: Skill[] | null;
   agents: NamedMD[] | null;
   commands: NamedMD[] | null;
+  plugins: Plugin[] | null;
+  marketplaces: Marketplace[] | null;
   memory?: MemoryDoc;
 }
