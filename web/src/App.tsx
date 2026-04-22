@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, BookOpen, ChevronDown, ChevronRight, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BookOpen, ChevronRight, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
 import type { Agent, ClaudeDirView, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
@@ -922,9 +922,6 @@ function BackCrumb({ label, onClick }: { label: string; onClick: () => void }) {
 }
 
 function PluginRow({ plugin }: { plugin: Plugin }) {
-  const meta = [plugin.marketplace, plugin.version ? `v${plugin.version}` : null]
-    .filter(Boolean)
-    .join(" · ");
   return (
     <ExpandableRow
       title={plugin.name}
@@ -935,7 +932,6 @@ function PluginRow({ plugin }: { plugin: Plugin }) {
           </span>
         ) : null
       }
-      meta={meta}
       expandable={!!plugin.description}
     >
       {plugin.description && (
@@ -1063,10 +1059,12 @@ function ExpandableRow({
         </div>
         {trailing}
         {interactive && (
-          <ChevronDown
+          <ChevronRight
             className={cn(
-              "shrink-0 mt-1 text-muted-foreground/60 transition-transform group-hover:text-muted-foreground",
-              open ? "rotate-180" : ""
+              "shrink-0 mt-1 text-muted-foreground/70 transition-[transform,opacity] duration-150",
+              open
+                ? "rotate-90 opacity-100"
+                : "opacity-0 group-hover:opacity-100"
             )}
             size={13}
             strokeWidth={1.8}
