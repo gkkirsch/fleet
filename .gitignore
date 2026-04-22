@@ -1,0 +1,6 @@
+/fleetview
+/web/node_modules
+/web/dist
+/dist/
+*.test
+.DS_Store
