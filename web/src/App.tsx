@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import type { Agent, Message } from "./types";
 
 const POLL_MS = 2000;
@@ -9,13 +16,12 @@ export function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Poll /api/fleet every 2s.
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
       try {
         const res = await fetch("/api/fleet");
-        if (!res.ok) throw new Error(`fleet: ${res.status}`);
+        if (!res.ok) throw new Error(`fleet ${res.status}`);
         const data = (await res.json()) as Agent[] | null;
         if (!cancelled) {
           setAgents(data ?? []);
@@ -33,7 +39,6 @@ export function App() {
     };
   }, []);
 
-  // When selection or time changes, refresh messages.
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
@@ -43,11 +48,11 @@ export function App() {
     const tick = async () => {
       try {
         const res = await fetch(`/api/agents/${selectedId}/messages`);
-        if (!res.ok) throw new Error(`messages: ${res.status}`);
+        if (!res.ok) throw new Error();
         const data = (await res.json()) as Message[] | null;
         if (!cancelled) setMessages(data ?? []);
       } catch {
-        /* ignore transient errors */
+        /* swallow */
       }
     };
     tick();
@@ -61,8 +66,12 @@ export function App() {
   const selected = agents?.find((a) => a.id === selectedId) ?? null;
 
   return (
-    <div className="layout">
-      {error && <div className="banner">backend error: {error}</div>}
+    <div className="h-screen grid grid-cols-[360px_1fr] bg-background text-foreground">
+      {error && (
+        <div className="col-span-2 bg-destructive/20 text-destructive text-xs px-3 py-1">
+          backend: {error}
+        </div>
+      )}
       <Sidebar
         agents={agents}
         selectedId={selectedId}
@@ -73,41 +82,7 @@ export function App() {
   );
 }
 
-function Sidebar({
-  agents,
-  selectedId,
-  onSelect,
-}: {
-  agents: Agent[] | null;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  // Build parent → children map for the tree.
-  const tree = useMemo(() => buildTree(agents ?? []), [agents]);
-  return (
-    <div className="sidebar">
-      <h1>Fleet{agents ? ` · ${agents.length}` : ""}</h1>
-      {agents === null && <div className="empty">loading…</div>}
-      {agents !== null && agents.length === 0 && (
-        <div className="empty">
-          no agents registered.
-          <br />
-          <small>run `roster spawn …`</small>
-        </div>
-      )}
-      {tree.roots.map((a) => (
-        <AgentNode
-          key={a.id}
-          agent={a}
-          tree={tree}
-          depth={0}
-          selectedId={selectedId}
-          onSelect={onSelect}
-        />
-      ))}
-    </div>
-  );
-}
+// ─────────────────────────────────────────────────────────────────
 
 type Tree = {
   byId: Map<string, Agent>;
@@ -132,6 +107,78 @@ function buildTree(agents: Agent[]): Tree {
   return { byId, children, roots };
 }
 
+function Sidebar({
+  agents,
+  selectedId,
+  onSelect,
+}: {
+  agents: Agent[] | null;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const tree = useMemo(() => buildTree(agents ?? []), [agents]);
+  return (
+    <div className="border-r border-border bg-sidebar flex flex-col h-full min-h-0">
+      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+        <h1 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+          Fleet
+        </h1>
+        {agents && (
+          <Badge variant="secondary" className="text-xs">
+            {agents.length}
+          </Badge>
+        )}
+      </div>
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="p-2">
+          {agents === null && (
+            <div className="text-muted-foreground text-sm p-3">loading…</div>
+          )}
+          {agents !== null && agents.length === 0 && (
+            <div className="text-muted-foreground text-sm p-3">
+              no agents registered.
+              <div className="text-xs mt-1 opacity-70">
+                run <code>roster spawn …</code>
+              </div>
+            </div>
+          )}
+          {tree.roots.map((a) => (
+            <AgentNode
+              key={a.id}
+              agent={a}
+              tree={tree}
+              depth={0}
+              selectedId={selectedId}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+function statusColor(status: string): string {
+  switch (status) {
+    case "ready":
+      return "bg-emerald-500";
+    case "streaming":
+      return "bg-amber-400 animate-pulse";
+    case "stopped":
+      return "bg-muted-foreground/40";
+    case "starting":
+      return "bg-sky-400";
+    case "trust-dialog":
+    case "permission-dialog":
+      return "bg-rose-500";
+    case "not-found":
+    case "dead":
+      return "bg-rose-700";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
 function AgentNode({
   agent,
   tree,
@@ -149,21 +196,40 @@ function AgentNode({
   const isSelected = agent.id === selectedId;
   return (
     <div>
-      <div
-        className={`agent ${isSelected ? "selected" : ""}`}
+      <button
+        type="button"
         onClick={() => onSelect(agent.id)}
+        className={cn(
+          "w-full text-left flex items-start gap-2 px-2 py-2 rounded-md border border-transparent transition-colors",
+          isSelected
+            ? "bg-accent border-border"
+            : "hover:bg-accent/40"
+        )}
       >
-        <div className={`dot ${agent.status}`} />
-        <div className="meta">
-          <div>
-            <span className="id">{agent.id}</span>
-            <span className="kind">{agent.kind}</span>
+        <div
+          className={cn(
+            "mt-1.5 h-2.5 w-2.5 rounded-full flex-shrink-0",
+            statusColor(agent.status)
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="font-mono text-sm font-medium truncate">
+              {agent.id}
+            </span>
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {agent.kind}
+            </span>
           </div>
-          {agent.description && <div className="desc">{agent.description}</div>}
+          {agent.description && (
+            <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+              {agent.description}
+            </div>
+          )}
         </div>
-      </div>
+      </button>
       {kids.length > 0 && (
-        <div className="tree-child">
+        <div className="ml-4 pl-2 border-l border-dashed border-border">
           {kids.map((k) => (
             <AgentNode
               key={k.id}
@@ -180,6 +246,8 @@ function AgentNode({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+
 function Detail({
   agent,
   messages,
@@ -189,91 +257,159 @@ function Detail({
 }) {
   if (!agent) {
     return (
-      <div className="detail">
-        <div className="empty">select an agent</div>
+      <div className="flex items-center justify-center text-muted-foreground">
+        select an agent
       </div>
     );
   }
   return (
-    <div className="detail">
-      <div className="detail-header">
-        <div>
-          <span className="id">{agent.id}</span>{" "}
-          <span style={{ color: "var(--muted)", fontSize: 12 }}>
-            {agent.kind} · {agent.status}
-          </span>
-        </div>
-        <div className="sub">
-          {agent.parent && <>parent: <code>{agent.parent}</code> · </>}
-          {agent.target && <>target: <code>{agent.target}</code> · </>}
-          {agent.session_uuid && (
-            <>uuid: <code>{agent.session_uuid.slice(0, 8)}…</code></>
-          )}
-        </div>
-        {agent.description && <div className="desc">{agent.description}</div>}
-      </div>
+    <div className="flex flex-col h-full min-h-0">
+      <DetailHeader agent={agent} />
       <MessageStream messages={messages} />
       <NotifyBox agentId={agent.id} />
     </div>
   );
 }
 
-function MessageStream({ messages }: { messages: Message[] }) {
-  if (!messages || messages.length === 0) {
-    return (
-      <div className="messages">
-        <div className="empty">no messages yet</div>
-      </div>
-    );
-  }
+function DetailHeader({ agent }: { agent: Agent }) {
   return (
-    <div className="messages">
-      {messages.map((m, i) => (
-        <MessageRow key={i} m={m} />
-      ))}
+    <div className="border-b border-border px-5 py-4 bg-sidebar/40">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="font-mono text-lg font-semibold">{agent.id}</span>
+        <Badge variant="secondary" className="uppercase tracking-wider text-[10px]">
+          {agent.kind}
+        </Badge>
+        <StatusBadge status={agent.status} />
+      </div>
+      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
+        {agent.parent && <span>parent: {agent.parent}</span>}
+        {agent.target && <span>target: {agent.target}</span>}
+        {agent.session_uuid && (
+          <span title={agent.session_uuid}>
+            uuid: {agent.session_uuid.slice(0, 8)}…
+          </span>
+        )}
+        {agent.cwd && <span>cwd: {agent.cwd}</span>}
+      </div>
+      {agent.description && (
+        <div className="mt-3 text-sm text-foreground/90">
+          {agent.description}
+        </div>
+      )}
     </div>
   );
 }
 
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className="text-[10px] uppercase tracking-wider gap-1.5 border-border"
+    >
+      <span className={cn("h-1.5 w-1.5 rounded-full", statusColor(status))} />
+      {status}
+    </Badge>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+
+function MessageStream({ messages }: { messages: Message[] }) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  // Auto-scroll to bottom when new messages arrive.
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length]);
+
+  if (!messages || messages.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+        no messages yet
+      </div>
+    );
+  }
+  return (
+    <ScrollArea className="flex-1 min-h-0">
+      <div className="px-5 py-4 space-y-2.5">
+        {messages.map((m, i) => (
+          <MessageRow key={i} m={m} />
+        ))}
+        <div ref={bottomRef} />
+      </div>
+    </ScrollArea>
+  );
+}
+
 function MessageRow({ m }: { m: Message }) {
-  const cls = m.thinking ? "thinking" : m.role;
-  let body: React.ReactNode = m.text ?? "";
-  if (m.role === "tool_use") {
-    body = (
-      <>
-        <div>
-          <strong>{m.tool}</strong>(
+  const roleLabel = m.thinking ? "thinking" : m.role;
+  const tone = toneFor(m);
+  return (
+    <Card
+      className={cn(
+        "px-3.5 py-2.5 gap-0 shadow-none text-sm whitespace-pre-wrap break-words",
+        tone
+      )}
+    >
+      <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+        <div className="flex items-center gap-2">
+          <span>{roleLabel}</span>
+          {m.tool && (
+            <span className="font-mono text-[11px] normal-case tracking-normal text-emerald-400">
+              {m.tool}
+            </span>
+          )}
         </div>
-        <pre style={{ margin: 0, fontSize: 11 }}>
-          {JSON.stringify(m.input, null, 2)}
-        </pre>
-        <div>)</div>
-      </>
+        <span className="font-mono opacity-60">{fmtTime(m.time)}</span>
+      </div>
+      <MessageBody m={m} />
+    </Card>
+  );
+}
+
+function toneFor(m: Message): string {
+  if (m.thinking) return "bg-muted/40 border-dashed italic opacity-80";
+  switch (m.role) {
+    case "user":
+      return "bg-blue-950/40 border-blue-900/50";
+    case "assistant":
+      return "bg-card";
+    case "tool_use":
+      return "bg-emerald-950/30 border-emerald-900/50 font-mono text-[12.5px]";
+    case "tool_result":
+      return "bg-muted/30 font-mono text-[12.5px] text-muted-foreground";
+    default:
+      return "bg-card";
+  }
+}
+
+function MessageBody({ m }: { m: Message }) {
+  if (m.role === "tool_use") {
+    return (
+      <pre className="text-[11.5px] m-0 overflow-x-auto whitespace-pre-wrap">
+        {JSON.stringify(m.input, null, 2)}
+      </pre>
     );
   }
   if (m.role === "tool_result") {
-    body = m.output ?? "";
+    return <>{m.output || ""}</>;
   }
-  return (
-    <div className={`msg ${cls}`}>
-      <div className="role">
-        {m.thinking ? "thinking" : m.role}
-        {m.tool && <span className="tool-name">{m.tool}</span>}
-        <span className="ts">{fmtTime(m.time)}</span>
-      </div>
-      {body}
-    </div>
-  );
+  return <>{m.text || ""}</>;
 }
 
 function fmtTime(iso: string) {
   try {
     const d = new Date(iso);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return d.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
   } catch {
     return iso;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────
 
 function NotifyBox({ agentId }: { agentId: string }) {
   const [text, setText] = useState("");
@@ -303,24 +439,28 @@ function NotifyBox({ agentId }: { agentId: string }) {
   }, [agentId, text]);
 
   return (
-    <div className="notify">
-      <textarea
-        placeholder={`message ${agentId}…`}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
-        }}
-        disabled={sending}
-      />
-      <button onClick={send} disabled={sending || !text.trim()}>
-        {sending ? "…" : "send"}
-      </button>
-      {err && (
-        <div style={{ color: "var(--err)", fontSize: 12, alignSelf: "center" }}>
-          {err}
+    <>
+      <Separator />
+      <div className="p-4 bg-sidebar/40">
+        <div className="flex gap-2 items-end">
+          <Textarea
+            className="font-mono text-sm bg-background resize-none min-h-[60px]"
+            placeholder={`message ${agentId}…  (⌘⏎ to send)`}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+            }}
+            disabled={sending}
+          />
+          <Button onClick={send} disabled={sending || !text.trim()}>
+            {sending ? "…" : "send"}
+          </Button>
         </div>
-      )}
-    </div>
+        {err && (
+          <div className="text-destructive text-xs mt-2">{err}</div>
+        )}
+      </div>
+    </>
   );
 }
