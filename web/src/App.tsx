@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, BookOpen, ChevronRight, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BookOpen, ChevronDown, ChevronRight, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
 import type { Agent, ClaudeDirView, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
@@ -922,26 +922,28 @@ function BackCrumb({ label, onClick }: { label: string; onClick: () => void }) {
 }
 
 function PluginRow({ plugin }: { plugin: Plugin }) {
+  const meta = [plugin.marketplace, plugin.version ? `v${plugin.version}` : null]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-[13px] font-medium text-foreground">{plugin.name}</span>
-        {!plugin.enabled && (
+    <ExpandableRow
+      title={plugin.name}
+      suffix={
+        !plugin.enabled ? (
           <span className="text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
             disabled
           </span>
-        )}
-      </div>
-      <div className="mt-0.5 text-[10px] text-muted-foreground font-mono truncate">
-        {plugin.marketplace}
-        {plugin.version ? ` · v${plugin.version}` : ""}
-      </div>
+        ) : null
+      }
+      meta={meta}
+      expandable={!!plugin.description}
+    >
       {plugin.description && (
-        <p className="mt-1 text-[12px] leading-snug text-muted-foreground line-clamp-3">
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
           {plugin.description}
         </p>
       )}
-    </div>
+    </ExpandableRow>
   );
 }
 
@@ -958,47 +960,121 @@ function MarketRow({
   error?: string;
   onInstall: (plugin: string, marketplace: string) => void;
 }) {
+  const trailing = plugin.installed ? (
+    <span className="shrink-0 text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+      installed
+    </span>
+  ) : (
+    <button
+      type="button"
+      disabled={installing}
+      onClick={(e) => {
+        e.stopPropagation();
+        onInstall(plugin.name, marketplace);
+      }}
+      title={installing ? "installing…" : error ? "Retry install" : `Install ${plugin.name}`}
+      className={cn(
+        "shrink-0 flex items-center gap-1 h-6 px-2 rounded-md bg-background ring-1 transition text-[10px] tracking-[0.18em] uppercase disabled:opacity-40",
+        error
+          ? "ring-[color:var(--clay)]/40 text-[color:var(--clay)] hover:ring-[color:var(--clay)]/70"
+          : "ring-border/70 text-muted-foreground hover:text-foreground hover:ring-border"
+      )}
+    >
+      {installing ? "…" : error ? "Retry" : (
+        <>
+          <Plus className="w-3 h-3" strokeWidth={1.8} />
+          Install
+        </>
+      )}
+    </button>
+  );
   return (
-    <div>
-      <div className="flex items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium text-foreground">{plugin.name}</div>
-          {plugin.description && (
-            <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground line-clamp-2">
-              {plugin.description}
-            </p>
-          )}
-        </div>
-        {plugin.installed ? (
-          <span className="shrink-0 text-[9px] tracking-[0.22em] uppercase text-muted-foreground pt-1">
-            installed
-          </span>
-        ) : (
-          <button
-            type="button"
-            disabled={installing}
-            onClick={() => onInstall(plugin.name, marketplace)}
-            title={installing ? "installing…" : error ? "Retry install" : `Install ${plugin.name}`}
-            className={cn(
-              "shrink-0 flex items-center gap-1 h-6 px-2 rounded-md bg-background ring-1 transition text-[10px] tracking-[0.18em] uppercase disabled:opacity-40",
-              error
-                ? "ring-[color:var(--clay)]/40 text-[color:var(--clay)] hover:ring-[color:var(--clay)]/70"
-                : "ring-border/70 text-muted-foreground hover:text-foreground hover:ring-border"
-            )}
-          >
-            {installing ? "…" : error ? "Retry" : (
-              <>
-                <Plus className="w-3 h-3" strokeWidth={1.8} />
-                Install
-              </>
-            )}
-          </button>
-        )}
-      </div>
+    <ExpandableRow
+      title={plugin.name}
+      trailing={trailing}
+      meta={plugin.category}
+      expandable={!!plugin.description || !!error}
+    >
+      {plugin.description && (
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          {plugin.description}
+        </p>
+      )}
       {error && (
-        <p className="mt-1.5 text-[11px] leading-snug text-[color:var(--clay)]/90">
+        <p className="mt-2 text-[11px] leading-snug text-[color:var(--clay)]/90">
           {error}
         </p>
+      )}
+    </ExpandableRow>
+  );
+}
+
+// ExpandableRow is the shared progressive-disclosure primitive: a title
+// row (optional meta line below), a chevron that rotates on expand, and
+// a body that appears on click. Trailing action (e.g. Install button)
+// stays clickable without toggling the row.
+function ExpandableRow({
+  title,
+  suffix,
+  meta,
+  trailing,
+  expandable,
+  children,
+}: {
+  title: string;
+  suffix?: React.ReactNode;
+  meta?: string | null;
+  trailing?: React.ReactNode;
+  expandable: boolean;
+  children?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const interactive = expandable;
+  return (
+    <div>
+      <div
+        role={interactive ? "button" : undefined}
+        tabIndex={interactive ? 0 : undefined}
+        onClick={() => interactive && setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (!interactive) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((o) => !o);
+          }
+        }}
+        className={cn(
+          "flex items-start gap-3 py-3",
+          interactive && "cursor-pointer group"
+        )}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[13px] font-medium text-foreground truncate">
+              {title}
+            </span>
+            {suffix}
+          </div>
+          {meta && (
+            <div className="mt-0.5 text-[10px] text-muted-foreground font-mono truncate">
+              {meta}
+            </div>
+          )}
+        </div>
+        {trailing}
+        {interactive && (
+          <ChevronDown
+            className={cn(
+              "shrink-0 mt-1 text-muted-foreground/60 transition-transform group-hover:text-muted-foreground",
+              open ? "rotate-180" : ""
+            )}
+            size={13}
+            strokeWidth={1.8}
+          />
+        )}
+      </div>
+      {open && children && (
+        <div className="pb-3 pr-6">{children}</div>
       )}
     </div>
   );
@@ -1029,7 +1105,7 @@ function Section({
 }) {
   return (
     <section>
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-4">
         <Icon
           className="text-muted-foreground"
           size={13}
@@ -1044,41 +1120,42 @@ function Section({
           </span>
         )}
       </div>
-      <div className="space-y-3">{children}</div>
+      <div className="divide-y divide-border/40">{children}</div>
     </section>
   );
 }
 
 function SkillRow({ skill }: { skill: Skill }) {
   return (
-    <div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-[13px] font-medium text-foreground">{skill.name}</span>
-        {!skill.enabled && (
+    <ExpandableRow
+      title={skill.name}
+      suffix={
+        !skill.enabled ? (
           <span className="text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
             disabled
           </span>
-        )}
-      </div>
+        ) : null
+      }
+      expandable={!!skill.description}
+    >
       {skill.description && (
-        <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground line-clamp-3">
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
           {skill.description}
         </p>
       )}
-    </div>
+    </ExpandableRow>
   );
 }
 
 function NamedRow({ item }: { item: NamedMD }) {
   return (
-    <div>
-      <div className="text-[13px] font-medium text-foreground">{item.name}</div>
+    <ExpandableRow title={item.name} expandable={!!item.description}>
       {item.description && (
-        <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground line-clamp-2">
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
           {item.description}
         </p>
       )}
-    </div>
+    </ExpandableRow>
   );
 }
 
