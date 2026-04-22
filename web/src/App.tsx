@@ -457,7 +457,13 @@ function MessageRow({ m, agent }: { m: Message; agent: Agent }) {
 
 function cleanUserText(text?: string): string {
   if (!text) return "";
-  return text.replace(/^\[from [^\]]+\]\n\n/, "").trim();
+  return text
+    // Strip the "[from sender]\n\n" prefix roster prepends on delivery.
+    .replace(/^\[from [^\]]+\]\n\n/, "")
+    // Strip the "— \nTo respond, end your turn…" reply footer roster appends
+    // when a registered agent sends the message.
+    .replace(/\n*—\nTo respond,[\s\S]*$/m, "")
+    .trim();
 }
 
 // ─── notify ──────────────────────────────────────────────────────
