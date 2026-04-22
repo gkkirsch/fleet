@@ -166,3 +166,30 @@
 .animate-soft-pulse {
     animation: japandi-pulse 2.2s ease-in-out infinite;
 }
+
+/* Gradient shimmer — used on the "thinking" verb while an agent is
+   streaming. The gradient sweeps across the text, revealing hue then
+   fading. Mirrors Claude Code's own spinner treatment. */
+@keyframes shimmer {
+    0% { background-position: 200% center; }
+    100% { background-position: -200% center; }
+}
+.shimmer-text {
+    background: linear-gradient(
+        90deg,
+        var(--muted-foreground) 0%,
+        var(--muted-foreground) 35%,
+        var(--foreground) 50%,
+        var(--muted-foreground) 65%,
+        var(--muted-foreground) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer 2.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    .animate-soft-pulse, .shimmer-text { animation: none; }
+}

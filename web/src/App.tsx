@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, Layers, Paperclip, Send, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SPINNER_VERBS } from "./spinnerVerbs";
 import type { Agent, Message } from "./types";
 
 const POLL_MS = 2000;
@@ -302,12 +303,17 @@ function MessageStream({ agent, messages }: { agent: Agent; messages: Message[] 
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
 
-  const filtered = messages.filter((m) => !m.thinking);
+  // Only show the two conversation roles. Tool calls and their results
+  // are hidden from the stream — when Claude is working, we surface a
+  // shimmering verb pill instead. Thinking blocks are also filtered.
+  const filtered = messages.filter(
+    (m) => (m.role === "user" || m.role === "assistant") && !m.thinking
+  );
+  const isStreaming = agent.status === "streaming";
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
       <div className="max-w-3xl mx-auto">
-        {/* Big serif display title — from description, or id as fallback */}
         <div className="mb-3">
           <KindTile kind={agent.kind} size={54} />
         </div>
@@ -323,7 +329,7 @@ function MessageStream({ agent, messages }: { agent: Agent; messages: Message[] 
           <div className="mb-8" />
         )}
 
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && !isStreaming ? (
           <div className="text-muted-foreground text-sm italic py-8">
             no messages yet — send one below
           </div>
@@ -332,9 +338,33 @@ function MessageStream({ agent, messages }: { agent: Agent; messages: Message[] 
             {filtered.map((m, i) => (
               <MessageRow key={i} m={m} agent={agent} />
             ))}
+            {isStreaming && <ThinkingRow agent={agent} />}
           </div>
         )}
         <div ref={bottomRef} />
+      </div>
+    </div>
+  );
+}
+
+function ThinkingRow({ agent }: { agent: Agent }) {
+  const [verb] = useState(() => SPINNER_VERBS[Math.floor(Math.random() * SPINNER_VERBS.length)]);
+  const [current, setCurrent] = useState(verb);
+
+  // Rotate the verb every few seconds so it feels alive without being twitchy.
+  useEffect(() => {
+    const h = setInterval(() => {
+      const next = SPINNER_VERBS[Math.floor(Math.random() * SPINNER_VERBS.length)];
+      setCurrent(next);
+    }, 3200);
+    return () => clearInterval(h);
+  }, []);
+
+  return (
+    <div className="flex items-center gap-3">
+      <KindTile kind={agent.kind} size={34} />
+      <div className="px-5 py-3 text-[15px]">
+        <span className="shimmer-text font-medium">{current}…</span>
       </div>
     </div>
   );
@@ -370,56 +400,12 @@ function MessageRow({ m, agent }: { m: Message; agent: Agent }) {
       </div>
     );
   }
-  if (m.role === "tool_use") {
-    const preview = toolPreview(m);
-    return (
-      <div className="flex justify-center">
-        <div className="inline-flex items-center gap-2.5 rounded-full bg-[color:var(--ochre-soft)]/60 border border-[color:var(--ochre-soft)] px-4 py-1.5 text-[12px] font-mono text-[color:var(--primary)]">
-          <span className="font-semibold tracking-tight">{m.tool}</span>
-          {preview && (
-            <span className="text-foreground/60 truncate max-w-md">{preview}</span>
-          )}
-        </div>
-      </div>
-    );
-  }
-  if (m.role === "tool_result") {
-    const out = trimOutput(m.output);
-    if (!out.trim()) return null;
-    return (
-      <div className="flex justify-center">
-        <div className="max-w-xl rounded-xl bg-muted/60 border border-border/60 px-4 py-2 text-[12px] font-mono text-muted-foreground whitespace-pre-wrap break-words leading-snug">
-          {out}
-        </div>
-      </div>
-    );
-  }
   return null;
 }
 
 function cleanUserText(text?: string): string {
   if (!text) return "";
   return text.replace(/^\[from [^\]]+\]\n\n/, "").trim();
-}
-
-function toolPreview(m: Message): string {
-  const inp = m.input;
-  if (!inp || typeof inp !== "object") return "";
-  const rec = inp as Record<string, unknown>;
-  for (const k of ["command", "file_path", "path", "pattern", "url", "query"]) {
-    const v = rec[k];
-    if (typeof v === "string") return v;
-  }
-  for (const v of Object.values(rec)) {
-    if (typeof v === "string" && v.length < 160) return v;
-  }
-  return "";
-}
-
-function trimOutput(out?: string): string {
-  if (!out) return "";
-  const max = 400;
-  return out.length <= max ? out : out.slice(0, max) + "…";
 }
 
 // ─── notify ──────────────────────────────────────────────────────
