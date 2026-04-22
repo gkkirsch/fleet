@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Agent, Message } from "./types";
@@ -14,27 +11,18 @@ export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    let stop = false;
     const tick = async () => {
-      try {
-        const res = await fetch("/api/fleet");
-        if (!res.ok) throw new Error(`fleet ${res.status}`);
-        const data = (await res.json()) as Agent[] | null;
-        if (!cancelled) {
-          setAgents(data ?? []);
-          setError(null);
-        }
-      } catch (e: unknown) {
-        if (!cancelled) setError(String((e as Error).message));
-      }
+      const res = await fetch("/api/fleet").catch(() => null);
+      if (stop || !res || !res.ok) return;
+      setAgents(((await res.json()) as Agent[] | null) ?? []);
     };
     tick();
     const h = setInterval(tick, POLL_MS);
     return () => {
-      cancelled = true;
+      stop = true;
       clearInterval(h);
     };
   }, []);
@@ -44,21 +32,16 @@ export function App() {
       setMessages([]);
       return;
     }
-    let cancelled = false;
+    let stop = false;
     const tick = async () => {
-      try {
-        const res = await fetch(`/api/agents/${selectedId}/messages`);
-        if (!res.ok) throw new Error();
-        const data = (await res.json()) as Message[] | null;
-        if (!cancelled) setMessages(data ?? []);
-      } catch {
-        /* swallow */
-      }
+      const res = await fetch(`/api/agents/${selectedId}/messages`).catch(() => null);
+      if (stop || !res || !res.ok) return;
+      setMessages(((await res.json()) as Message[] | null) ?? []);
     };
     tick();
     const h = setInterval(tick, POLL_MS);
     return () => {
-      cancelled = true;
+      stop = true;
       clearInterval(h);
     };
   }, [selectedId]);
@@ -66,12 +49,7 @@ export function App() {
   const selected = agents?.find((a) => a.id === selectedId) ?? null;
 
   return (
-    <div className="h-screen grid grid-cols-[360px_1fr] bg-background text-foreground">
-      {error && (
-        <div className="col-span-2 bg-destructive/20 text-destructive text-xs px-3 py-1">
-          backend: {error}
-        </div>
-      )}
+    <div className="h-screen grid grid-cols-[320px_1fr] bg-background text-foreground">
       <Sidebar
         agents={agents}
         selectedId={selectedId}
@@ -85,15 +63,13 @@ export function App() {
 // ─────────────────────────────────────────────────────────────────
 
 type Tree = {
-  byId: Map<string, Agent>;
   children: Map<string, Agent[]>;
   roots: Agent[];
 };
 
 function buildTree(agents: Agent[]): Tree {
-  const byId = new Map<string, Agent>();
+  const byId = new Set(agents.map((a) => a.id));
   const children = new Map<string, Agent[]>();
-  agents.forEach((a) => byId.set(a.id, a));
   const roots: Agent[] = [];
   agents.forEach((a) => {
     if (a.parent && byId.has(a.parent)) {
@@ -104,7 +80,7 @@ function buildTree(agents: Agent[]): Tree {
       roots.push(a);
     }
   });
-  return { byId, children, roots };
+  return { children, roots };
 }
 
 function Sidebar({
@@ -118,124 +94,103 @@ function Sidebar({
 }) {
   const tree = useMemo(() => buildTree(agents ?? []), [agents]);
   return (
-    <div className="border-r border-border bg-sidebar flex flex-col h-full min-h-0">
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <h1 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
+    <aside className="border-r border-border bg-sidebar flex flex-col h-full min-h-0">
+      <div className="px-7 pt-8 pb-4">
+        <h1 className="text-[13px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
           Fleet
         </h1>
-        {agents && (
-          <Badge variant="secondary" className="text-xs">
-            {agents.length}
-          </Badge>
-        )}
       </div>
       <ScrollArea className="flex-1 min-h-0">
-        <div className="p-2">
+        <div className="px-3 pb-6 space-y-1">
           {agents === null && (
-            <div className="text-muted-foreground text-sm p-3">loading…</div>
+            <p className="text-muted-foreground text-sm px-4 py-6 italic">
+              loading…
+            </p>
           )}
           {agents !== null && agents.length === 0 && (
-            <div className="text-muted-foreground text-sm p-3">
-              no agents registered.
-              <div className="text-xs mt-1 opacity-70">
-                run <code>roster spawn …</code>
-              </div>
-            </div>
+            <p className="text-muted-foreground text-sm px-4 py-6">
+              no agents yet
+            </p>
           )}
           {tree.roots.map((a) => (
             <AgentNode
               key={a.id}
               agent={a}
               tree={tree}
-              depth={0}
               selectedId={selectedId}
               onSelect={onSelect}
             />
           ))}
         </div>
       </ScrollArea>
-    </div>
+    </aside>
   );
-}
-
-function statusColor(status: string): string {
-  switch (status) {
-    case "ready":
-      return "bg-emerald-500";
-    case "streaming":
-      return "bg-amber-400 animate-pulse";
-    case "stopped":
-      return "bg-muted-foreground/40";
-    case "starting":
-      return "bg-sky-400";
-    case "trust-dialog":
-    case "permission-dialog":
-      return "bg-rose-500";
-    case "not-found":
-    case "dead":
-      return "bg-rose-700";
-    default:
-      return "bg-muted-foreground/40";
-  }
 }
 
 function AgentNode({
   agent,
   tree,
-  depth,
   selectedId,
   onSelect,
 }: {
   agent: Agent;
   tree: Tree;
-  depth: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
   const kids = tree.children.get(agent.id) ?? [];
   const isSelected = agent.id === selectedId;
+  // Only surface non-default statuses — ready is the assumed norm, no chrome.
+  const stateHint =
+    agent.status === "streaming"
+      ? "streaming"
+      : agent.status === "trust-dialog" || agent.status === "permission-dialog"
+      ? "waiting for you"
+      : agent.status === "stopped" || agent.status === "not-found" || agent.status === "dead"
+      ? "stopped"
+      : null;
   return (
     <div>
       <button
         type="button"
         onClick={() => onSelect(agent.id)}
         className={cn(
-          "w-full text-left flex items-start gap-2 px-2 py-2 rounded-md border border-transparent transition-colors",
+          "w-full text-left px-4 py-3 rounded-2xl transition-colors duration-150",
           isSelected
-            ? "bg-accent border-border"
-            : "hover:bg-accent/40"
+            ? "bg-card ring-1 ring-border/60"
+            : "hover:bg-sidebar-accent/50"
         )}
       >
         <div
           className={cn(
-            "mt-1.5 h-2.5 w-2.5 rounded-full flex-shrink-0",
-            statusColor(agent.status)
+            "text-[14px] leading-snug",
+            agent.status === "stopped" ? "text-muted-foreground" : "text-foreground/90"
           )}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-sm font-medium truncate">
-              {agent.id}
-            </span>
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              {agent.kind}
-            </span>
-          </div>
-          {agent.description && (
-            <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
-              {agent.description}
-            </div>
-          )}
+        >
+          {agent.description || agent.id}
         </div>
+        {stateHint && (
+          <div
+            className={cn(
+              "text-[11px] mt-1.5 tracking-wide",
+              agent.status === "streaming"
+                ? "text-[color:var(--ochre)] animate-soft-pulse"
+                : agent.status === "trust-dialog" || agent.status === "permission-dialog"
+                ? "text-[color:var(--clay)]"
+                : "text-muted-foreground"
+            )}
+          >
+            {stateHint}
+          </div>
+        )}
       </button>
       {kids.length > 0 && (
-        <div className="ml-4 pl-2 border-l border-dashed border-border">
+        <div className="ml-5 mt-1 space-y-1">
           {kids.map((k) => (
             <AgentNode
               key={k.id}
               agent={k}
               tree={tree}
-              depth={depth + 1}
               selectedId={selectedId}
               onSelect={onSelect}
             />
@@ -257,58 +212,21 @@ function Detail({
 }) {
   if (!agent) {
     return (
-      <div className="flex items-center justify-center text-muted-foreground">
-        select an agent
+      <div className="flex items-center justify-center text-muted-foreground text-sm italic">
+        select one
       </div>
     );
   }
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <DetailHeader agent={agent} />
+    <section className="flex flex-col h-full min-h-0">
+      <header className="px-12 pt-10 pb-6">
+        <h2 className="text-[15px] leading-relaxed text-foreground max-w-2xl">
+          {agent.description || agent.id}
+        </h2>
+      </header>
       <MessageStream messages={messages} />
       <NotifyBox agentId={agent.id} />
-    </div>
-  );
-}
-
-function DetailHeader({ agent }: { agent: Agent }) {
-  return (
-    <div className="border-b border-border px-5 py-4 bg-sidebar/40">
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="font-mono text-lg font-semibold">{agent.id}</span>
-        <Badge variant="secondary" className="uppercase tracking-wider text-[10px]">
-          {agent.kind}
-        </Badge>
-        <StatusBadge status={agent.status} />
-      </div>
-      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
-        {agent.parent && <span>parent: {agent.parent}</span>}
-        {agent.target && <span>target: {agent.target}</span>}
-        {agent.session_uuid && (
-          <span title={agent.session_uuid}>
-            uuid: {agent.session_uuid.slice(0, 8)}…
-          </span>
-        )}
-        {agent.cwd && <span>cwd: {agent.cwd}</span>}
-      </div>
-      {agent.description && (
-        <div className="mt-3 text-sm text-foreground/90">
-          {agent.description}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <Badge
-      variant="outline"
-      className="text-[10px] uppercase tracking-wider gap-1.5 border-border"
-    >
-      <span className={cn("h-1.5 w-1.5 rounded-full", statusColor(status))} />
-      {status}
-    </Badge>
+    </section>
   );
 }
 
@@ -316,22 +234,24 @@ function StatusBadge({ status }: { status: string }) {
 
 function MessageStream({ messages }: { messages: Message[] }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  // Auto-scroll to bottom when new messages arrive.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
 
-  if (!messages || messages.length === 0) {
+  // Skip thinking blocks — noise for this view.
+  const filtered = messages.filter((m) => !m.thinking);
+
+  if (filtered.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-        no messages yet
+      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm italic">
+        —
       </div>
     );
   }
   return (
     <ScrollArea className="flex-1 min-h-0">
-      <div className="px-5 py-4 space-y-2.5">
-        {messages.map((m, i) => (
+      <div className="px-12 py-2 pb-8 space-y-3 max-w-3xl">
+        {filtered.map((m, i) => (
           <MessageRow key={i} m={m} />
         ))}
         <div ref={bottomRef} />
@@ -341,72 +261,64 @@ function MessageStream({ messages }: { messages: Message[] }) {
 }
 
 function MessageRow({ m }: { m: Message }) {
-  const roleLabel = m.thinking ? "thinking" : m.role;
-  const tone = toneFor(m);
-  return (
-    <Card
-      className={cn(
-        "px-3.5 py-2.5 gap-0 shadow-none text-sm whitespace-pre-wrap break-words",
-        tone
-      )}
-    >
-      <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
-        <div className="flex items-center gap-2">
-          <span>{roleLabel}</span>
-          {m.tool && (
-            <span className="font-mono text-[11px] normal-case tracking-normal text-emerald-400">
-              {m.tool}
-            </span>
-          )}
-        </div>
-        <span className="font-mono opacity-60">{fmtTime(m.time)}</span>
+  if (m.role === "user") {
+    return (
+      <div className="rounded-2xl px-5 py-4 bg-[color:var(--matcha-soft)]/55 border border-[color:var(--matcha-soft)] text-[14.5px] leading-relaxed whitespace-pre-wrap break-words">
+        {cleanUserText(m.text)}
       </div>
-      <MessageBody m={m} />
-    </Card>
-  );
-}
-
-function toneFor(m: Message): string {
-  if (m.thinking) return "bg-muted/40 border-dashed italic opacity-80";
-  switch (m.role) {
-    case "user":
-      return "bg-blue-950/40 border-blue-900/50";
-    case "assistant":
-      return "bg-card";
-    case "tool_use":
-      return "bg-emerald-950/30 border-emerald-900/50 font-mono text-[12.5px]";
-    case "tool_result":
-      return "bg-muted/30 font-mono text-[12.5px] text-muted-foreground";
-    default:
-      return "bg-card";
+    );
   }
-}
-
-function MessageBody({ m }: { m: Message }) {
+  if (m.role === "assistant") {
+    return (
+      <div className="rounded-2xl px-5 py-4 bg-card border border-border/60 text-[14.5px] leading-relaxed whitespace-pre-wrap break-words">
+        {m.text || ""}
+      </div>
+    );
+  }
   if (m.role === "tool_use") {
     return (
-      <pre className="text-[11.5px] m-0 overflow-x-auto whitespace-pre-wrap">
-        {JSON.stringify(m.input, null, 2)}
-      </pre>
+      <div className="rounded-xl px-4 py-2.5 bg-[color:var(--ochre-soft)]/45 border border-[color:var(--ochre-soft)]/90 font-mono text-[12.5px] text-foreground/80 leading-snug flex items-baseline gap-3">
+        <span className="font-medium text-[color:var(--primary)] tracking-tight">{m.tool}</span>
+        <span className="truncate opacity-80">{toolPreview(m)}</span>
+      </div>
     );
   }
   if (m.role === "tool_result") {
-    return <>{m.output || ""}</>;
+    return (
+      <div className="rounded-xl px-4 py-2.5 bg-secondary/70 font-mono text-[12.5px] text-muted-foreground leading-snug whitespace-pre-wrap break-words">
+        {trimOutput(m.output)}
+      </div>
+    );
   }
-  return <>{m.text || ""}</>;
+  return null;
 }
 
-function fmtTime(iso: string) {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  } catch {
-    return iso;
+// Strip the "[from xxx]\n\n" prefix we prepend in notify; the user doesn't
+// want to read their own UI wrapper back every time.
+function cleanUserText(text?: string): string {
+  if (!text) return "";
+  return text.replace(/^\[from [^\]]+\]\n\n/, "");
+}
+
+function toolPreview(m: Message): string {
+  const inp = m.input;
+  if (!inp || typeof inp !== "object") return "";
+  const rec = inp as Record<string, unknown>;
+  for (const k of ["command", "file_path", "path", "pattern", "url", "query"]) {
+    const v = rec[k];
+    if (typeof v === "string") return v;
   }
+  // Fallback: first short string value, else nothing.
+  for (const v of Object.values(rec)) {
+    if (typeof v === "string" && v.length < 160) return v;
+  }
+  return "";
+}
+
+function trimOutput(out?: string): string {
+  if (!out) return "";
+  const max = 600;
+  return out.length <= max ? out : out.slice(0, max) + "\n…";
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -414,53 +326,43 @@ function fmtTime(iso: string) {
 function NotifyBox({ agentId }: { agentId: string }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
 
   const send = useCallback(async () => {
     if (!text.trim()) return;
     setSending(true);
-    setErr(null);
     try {
       const res = await fetch(`/api/agents/${agentId}/notify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, from: "ui" }),
       });
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(body || `HTTP ${res.status}`);
-      }
-      setText("");
-    } catch (e: unknown) {
-      setErr(String((e as Error).message));
+      if (res.ok) setText("");
     } finally {
       setSending(false);
     }
   }, [agentId, text]);
 
   return (
-    <>
-      <Separator />
-      <div className="p-4 bg-sidebar/40">
-        <div className="flex gap-2 items-end">
-          <Textarea
-            className="font-mono text-sm bg-background resize-none min-h-[60px]"
-            placeholder={`message ${agentId}…  (⌘⏎ to send)`}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
-            }}
-            disabled={sending}
-          />
-          <Button onClick={send} disabled={sending || !text.trim()}>
-            {sending ? "…" : "send"}
-          </Button>
-        </div>
-        {err && (
-          <div className="text-destructive text-xs mt-2">{err}</div>
-        )}
+    <div className="px-12 pt-4 pb-8">
+      <div className="max-w-3xl flex gap-3 items-end">
+        <Textarea
+          className="rounded-3xl border-border/70 bg-card text-[14.5px] resize-none min-h-[64px] px-5 py-3.5 shadow-none focus-visible:ring-1 focus-visible:ring-ring/50 leading-relaxed"
+          placeholder="message…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+          }}
+          disabled={sending}
+        />
+        <Button
+          onClick={send}
+          disabled={sending || !text.trim()}
+          className="rounded-full h-[64px] px-7 shadow-none"
+        >
+          send
+        </Button>
       </div>
-    </>
+    </div>
   );
 }
