@@ -594,11 +594,13 @@ function ThreadPanel({
   const [data, setData] = useState<ClaudeDirView | null>(null);
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [route, setRoute] = useState<PanelRoute>("home");
 
   // Reset to home whenever the selected agent changes.
   useEffect(() => {
     setRoute("home");
+    setInstallErrors({});
   }, [agent?.id]);
 
   const load = useCallback(() => {
@@ -633,29 +635,53 @@ function ThreadPanel({
       if (!agent) return;
       const key = `${pluginName}@${marketplace}`;
       setInstalling((s) => new Set(s).add(key));
+      setInstallErrors((e) => {
+        if (!(key in e)) return e;
+        const n = { ...e };
+        delete n[key];
+        return n;
+      });
       try {
-        await fetch(`/api/agents/${agent.id}/plugins/install`, {
+        const r = await fetch(`/api/agents/${agent.id}/plugins/install`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            plugin: pluginName,
-            marketplace,
-            restart: true,
-          }),
+          body: JSON.stringify({ plugin: pluginName, marketplace, restart: true }),
         });
+        if (!r.ok) {
+          const msg = (await r.text()).trim() || `HTTP ${r.status}`;
+          setInstallErrors((e) => ({ ...e, [key]: summarizeInstallError(msg) }));
+        }
+      } catch (err) {
+        setInstallErrors((e) => ({ ...e, [key]: String(err) }));
       } finally {
-        // Clear after a minute — the poll above picks up the real state.
-        setTimeout(() => {
-          setInstalling((s) => {
-            const n = new Set(s);
-            n.delete(key);
-            return n;
-          });
-        }, 60_000);
+        setInstalling((s) => {
+          const n = new Set(s);
+          n.delete(key);
+          return n;
+        });
       }
     },
     [agent]
   );
+
+  // Clear an install error when the poll shows the plugin landed after all.
+  useEffect(() => {
+    if (!data) return;
+    const installed = new Set(
+      (data.plugins ?? []).map((p) => `${p.name}@${p.marketplace}`)
+    );
+    setInstallErrors((e) => {
+      let changed = false;
+      const n = { ...e };
+      for (const k of Object.keys(n)) {
+        if (installed.has(k)) {
+          delete n[k];
+          changed = true;
+        }
+      }
+      return changed ? n : e;
+    });
+  }, [data]);
 
   return (
     <aside
@@ -685,6 +711,7 @@ function ThreadPanel({
               <MarketplaceView
                 view={data}
                 installing={installing}
+                errors={installErrors}
                 onInstall={install}
                 onBack={() => setRoute("home")}
               />
@@ -809,11 +836,13 @@ function HomeView({
 function MarketplaceView({
   view,
   installing,
+  errors,
   onInstall,
   onBack,
 }: {
   view: ClaudeDirView;
   installing: Set<string>;
+  errors: Record<string, string>;
   onInstall: (plugin: string, marketplace: string) => void;
   onBack: () => void;
 }) {
@@ -833,15 +862,19 @@ function MarketplaceView({
           label={m.name}
           count={m.plugins.length}
         >
-          {m.plugins.map((mp) => (
-            <MarketRow
-              key={mp.name}
-              plugin={mp}
-              marketplace={m.name}
-              installing={installing.has(`${mp.name}@${m.name}`)}
-              onInstall={onInstall}
-            />
-          ))}
+          {m.plugins.map((mp) => {
+            const key = `${mp.name}@${m.name}`;
+            return (
+              <MarketRow
+                key={mp.name}
+                plugin={mp}
+                marketplace={m.name}
+                installing={installing.has(key)}
+                error={errors[key]}
+                onInstall={onInstall}
+              />
+            );
+          })}
         </Section>
       ))}
     </div>
@@ -928,45 +961,71 @@ function MarketRow({
   plugin,
   marketplace,
   installing,
+  error,
   onInstall,
 }: {
   plugin: MarketPlugin;
   marketplace: string;
   installing: boolean;
+  error?: string;
   onInstall: (plugin: string, marketplace: string) => void;
 }) {
   return (
-    <div className="flex items-start gap-3">
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-foreground">{plugin.name}</div>
-        {plugin.description && (
-          <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground line-clamp-2">
-            {plugin.description}
-          </p>
+    <div>
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-medium text-foreground">{plugin.name}</div>
+          {plugin.description && (
+            <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground line-clamp-2">
+              {plugin.description}
+            </p>
+          )}
+        </div>
+        {plugin.installed ? (
+          <span className="shrink-0 text-[9px] tracking-[0.22em] uppercase text-muted-foreground pt-1">
+            installed
+          </span>
+        ) : (
+          <button
+            type="button"
+            disabled={installing}
+            onClick={() => onInstall(plugin.name, marketplace)}
+            title={installing ? "installing…" : error ? "Retry install" : `Install ${plugin.name}`}
+            className={cn(
+              "shrink-0 flex items-center gap-1 h-6 px-2 rounded-md bg-background ring-1 transition text-[10px] tracking-[0.18em] uppercase disabled:opacity-40",
+              error
+                ? "ring-[color:var(--clay)]/40 text-[color:var(--clay)] hover:ring-[color:var(--clay)]/70"
+                : "ring-border/70 text-muted-foreground hover:text-foreground hover:ring-border"
+            )}
+          >
+            {installing ? "…" : error ? "Retry" : (
+              <>
+                <Plus className="w-3 h-3" strokeWidth={1.8} />
+                Install
+              </>
+            )}
+          </button>
         )}
       </div>
-      {plugin.installed ? (
-        <span className="shrink-0 text-[9px] tracking-[0.22em] uppercase text-muted-foreground pt-1">
-          installed
-        </span>
-      ) : (
-        <button
-          type="button"
-          disabled={installing}
-          onClick={() => onInstall(plugin.name, marketplace)}
-          title={installing ? "installing…" : `Install ${plugin.name}`}
-          className="shrink-0 flex items-center gap-1 h-6 px-2 rounded-md bg-background ring-1 ring-border/70 hover:ring-border transition text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-foreground disabled:opacity-40"
-        >
-          {installing ? "…" : (
-            <>
-              <Plus className="w-3 h-3" strokeWidth={1.8} />
-              Install
-            </>
-          )}
-        </button>
+      {error && (
+        <p className="mt-1.5 text-[11px] leading-snug text-[color:var(--clay)]/90">
+          {error}
+        </p>
       )}
     </div>
   );
+}
+
+// summarizeInstallError trims the noisiest bits off the claude CLI's error
+// text so the inline message reads as a sentence, not a stack dump.
+function summarizeInstallError(raw: string): string {
+  const s = raw.replace(/^install:\s*/, "").replace(/^exit status \d+\s*—\s*/, "");
+  // Claude prints the failure line after "✘ Failed to install plugin X:"
+  const m = s.match(/Failed to install plugin[^:]*:\s*([\s\S]*)/);
+  const body = m ? m[1] : s;
+  // Keep just the first meaningful line, clip to something readable.
+  const first = body.split("\n").map((l) => l.trim()).filter(Boolean)[0] ?? body;
+  return first.length > 200 ? first.slice(0, 200) + "…" : first;
 }
 
 function Section({
