@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, Layers, Paperclip, Send, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SPINNER_VERBS } from "./spinnerVerbs";
+import { SPINNER_PHRASES } from "./spinnerVerbs";
 import type { Agent, Message } from "./types";
 
 const POLL_MS = 2000;
@@ -10,6 +10,13 @@ export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  // Map of agent id → timestamp of a just-sent message. Used to show the
+  // thinking shimmer immediately, before backend polling catches up to the
+  // agent entering "streaming" state. Cleared by the effect below.
+  const [pendingSends, setPendingSends] = useState<Record<string, number>>({});
+  const markPending = useCallback((id: string) => {
+    setPendingSends((p) => ({ ...p, [id]: Date.now() }));
+  }, []);
 
   useEffect(() => {
     let stop = false;
@@ -47,6 +54,37 @@ export function App() {
 
   const selected = agents?.find((a) => a.id === selectedId) ?? null;
 
+  // Clear per-agent pending flags once the backend has caught up (status
+  // flipped to streaming — the shimmer keeps rendering from that source).
+  // Safety: also expire after 60s so a silent backend doesn't strand us.
+  useEffect(() => {
+    if (!agents) return;
+    const toClear: string[] = [];
+    for (const [id, sentAt] of Object.entries(pendingSends)) {
+      const a = agents.find((x) => x.id === id);
+      const streaming = a?.status === "streaming";
+      const expired = Date.now() - sentAt > 60_000;
+      if (streaming || expired) toClear.push(id);
+    }
+    if (toClear.length) {
+      setPendingSends((p) => {
+        const n = { ...p };
+        toClear.forEach((id) => delete n[id]);
+        return n;
+      });
+    }
+  }, [agents, pendingSends]);
+
+  // Force a periodic re-render so the 60s safety timeout re-evaluates even
+  // when nothing else changes (e.g. backend down).
+  useEffect(() => {
+    if (Object.keys(pendingSends).length === 0) return;
+    const h = setInterval(() => setPendingSends((p) => ({ ...p })), 5_000);
+    return () => clearInterval(h);
+  }, [pendingSends]);
+
+  const isPending = selected ? !!pendingSends[selected.id] : false;
+
   return (
     <div className="h-screen grid grid-cols-[380px_1fr] bg-background text-foreground">
       <Sidebar
@@ -57,6 +95,8 @@ export function App() {
       <Detail
         agent={selected}
         messages={messages}
+        isPending={isPending}
+        onSent={markPending}
         onBack={() => setSelectedId(null)}
       />
     </div>
@@ -256,10 +296,14 @@ function AgentNode({
 function Detail({
   agent,
   messages,
+  isPending,
+  onSent,
   onBack,
 }: {
   agent: Agent | null;
   messages: Message[];
+  isPending: boolean;
+  onSent: (id: string) => void;
   onBack: () => void;
 }) {
   if (!agent) {
@@ -272,8 +316,8 @@ function Detail({
   return (
     <section className="flex flex-col h-full min-h-0">
       <TopNav onBack={onBack} />
-      <MessageStream agent={agent} messages={messages} />
-      <NotifyBox agentId={agent.id} />
+      <MessageStream agent={agent} messages={messages} isPending={isPending} />
+      <NotifyBox agentId={agent.id} onSent={onSent} />
     </section>
   );
 }
@@ -297,7 +341,15 @@ function TopNav({ onBack }: { onBack: () => void }) {
 
 // ─── messages ────────────────────────────────────────────────────
 
-function MessageStream({ agent, messages }: { agent: Agent; messages: Message[] }) {
+function MessageStream({
+  agent,
+  messages,
+  isPending,
+}: {
+  agent: Agent;
+  messages: Message[];
+  isPending: boolean;
+}) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -309,7 +361,7 @@ function MessageStream({ agent, messages }: { agent: Agent; messages: Message[] 
   const filtered = messages.filter(
     (m) => (m.role === "user" || m.role === "assistant") && !m.thinking
   );
-  const isStreaming = agent.status === "streaming";
+  const isStreaming = agent.status === "streaming" || isPending;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
@@ -348,13 +400,13 @@ function MessageStream({ agent, messages }: { agent: Agent; messages: Message[] 
 }
 
 function ThinkingRow({ agent }: { agent: Agent }) {
-  const [verb] = useState(() => SPINNER_VERBS[Math.floor(Math.random() * SPINNER_VERBS.length)]);
+  const [verb] = useState(() => SPINNER_PHRASES[Math.floor(Math.random() * SPINNER_PHRASES.length)]);
   const [current, setCurrent] = useState(verb);
 
   // Rotate the verb every few seconds so it feels alive without being twitchy.
   useEffect(() => {
     const h = setInterval(() => {
-      const next = SPINNER_VERBS[Math.floor(Math.random() * SPINNER_VERBS.length)];
+      const next = SPINNER_PHRASES[Math.floor(Math.random() * SPINNER_PHRASES.length)];
       setCurrent(next);
     }, 3200);
     return () => clearInterval(h);
@@ -410,13 +462,23 @@ function cleanUserText(text?: string): string {
 
 // ─── notify ──────────────────────────────────────────────────────
 
-function NotifyBox({ agentId }: { agentId: string }) {
+function NotifyBox({
+  agentId,
+  onSent,
+}: {
+  agentId: string;
+  onSent: (id: string) => void;
+}) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
 
   const send = useCallback(async () => {
     if (!text.trim()) return;
     setSending(true);
+    // Optimistically kick off the shimmer the instant the user sends,
+    // BEFORE the network round-trip. The App-level effect will clear
+    // the flag once the backend reports streaming (or after 60s).
+    onSent(agentId);
     try {
       const r = await fetch(`/api/agents/${agentId}/notify`, {
         method: "POST",
@@ -427,7 +489,7 @@ function NotifyBox({ agentId }: { agentId: string }) {
     } finally {
       setSending(false);
     }
-  }, [agentId, text]);
+  }, [agentId, text, onSent]);
 
   return (
     <div className="px-10 pb-8 pt-4">
