@@ -2,11 +2,12 @@
 @import "tw-animate-css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
+@import "@fontsource-variable/fraunces";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-heading: var(--font-sans);
+    --font-heading: 'Fraunces Variable', 'Instrument Serif', ui-serif, serif;
     --font-sans: 'Geist Variable', sans-serif;
     --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
     --color-background: var(--background);
@@ -58,7 +59,7 @@
    borders, generously rounded geometry.
    ------------------------------------------------------------------------- */
 :root {
-    --radius: 1rem;
+    --radius: 0.5rem;
 
     --background: oklch(0.97 0.010 85);       /* warm linen */
     --foreground: oklch(0.26 0.012 70);       /* warm charcoal */
