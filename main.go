@@ -436,6 +436,12 @@ func router() http.Handler {
 				return
 			}
 			handleNotify(w, r, id)
+		case "claude":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			handleClaude(w, r, id)
 		default:
 			http.Error(w, "unknown subresource", http.StatusNotFound)
 		}
