@@ -118,7 +118,6 @@ export function App() {
           messages={messages}
           isPending={isPending}
           onSent={markPending}
-          onBack={() => setSelectedId(null)}
           panelOpen={panel.open}
           onTogglePanel={panel.toggle}
         />
@@ -326,7 +325,6 @@ function Detail({
   messages,
   isPending,
   onSent,
-  onBack,
   panelOpen,
   onTogglePanel,
 }: {
@@ -334,7 +332,6 @@ function Detail({
   messages: Message[];
   isPending: boolean;
   onSent: (id: string) => void;
-  onBack: () => void;
   panelOpen: boolean;
   onTogglePanel: () => void;
 }) {
@@ -347,7 +344,7 @@ function Detail({
   }
   return (
     <section className="flex flex-col h-full min-h-0">
-      <TopNav onBack={onBack} panelOpen={panelOpen} onTogglePanel={onTogglePanel} />
+      <TopNav panelOpen={panelOpen} onTogglePanel={onTogglePanel} />
       <MessageStream agent={agent} messages={messages} isPending={isPending} />
       <NotifyBox agentId={agent.id} onSent={onSent} />
     </section>
@@ -355,31 +352,22 @@ function Detail({
 }
 
 function TopNav({
-  onBack,
   panelOpen,
   onTogglePanel,
 }: {
-  onBack: () => void;
   panelOpen: boolean;
   onTogglePanel: () => void;
 }) {
   const Icon = panelOpen ? PanelRightClose : PanelRight;
   return (
-    <div className="flex items-center justify-between px-10 pt-8 pb-2">
-      <button
-        type="button"
-        onClick={onBack}
-        className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
-      >
-        Back
-      </button>
+    <div className="flex items-center justify-end px-10 pt-8 pb-2">
       <button
         type="button"
         onClick={onTogglePanel}
-        title={panelOpen ? "Hide thread panel" : "Show thread panel"}
+        title={panelOpen ? "Hide settings panel" : "Show settings panel"}
         className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
       >
-        <span>Thread</span>
+        <span>Settings</span>
         <Icon className="w-3.5 h-3.5" strokeWidth={1.8} />
       </button>
     </div>
