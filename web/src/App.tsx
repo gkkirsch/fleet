@@ -778,7 +778,7 @@ function PanelHeader({
           ? "Marketplace · Plugin"
           : "Installed · Plugin";
   return (
-    <div className="px-8 pt-10 pb-5 border-b border-border/50">
+    <div className="px-8 pt-8 pb-5 border-b border-border/50">
       <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
         {crumb}
       </div>
@@ -893,7 +893,7 @@ function MarketplaceView({
 }) {
   const markets = view.marketplaces ?? [];
   return (
-    <div className="px-8 py-6 space-y-9">
+    <div className="px-8 pt-8 pb-6 space-y-9">
       <BackCrumb label="Installed" onClick={onBack} />
       {markets.length === 0 && (
         <p className="text-sm italic text-muted-foreground">
@@ -962,7 +962,7 @@ function PluginDetailView({
   const enabled = installed?.enabled ?? false;
 
   return (
-    <div className="px-8 py-6 space-y-6">
+    <div className="px-8 pt-8 pb-6 space-y-6">
       <BackCrumb label={backLabel} onClick={onBack} />
 
       <header className="space-y-2">
