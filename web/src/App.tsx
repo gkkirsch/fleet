@@ -570,7 +570,15 @@ function NotifyBox({
 
 // ─── thread panel ────────────────────────────────────────────────
 
-type PanelRoute = "home" | "marketplace";
+type PanelRoute =
+  | { kind: "home" }
+  | { kind: "marketplace" }
+  | {
+      kind: "plugin";
+      pluginName: string;
+      marketplace: string;
+      origin: "home" | "marketplace";
+    };
 
 function ThreadPanel({
   agent,
@@ -583,13 +591,20 @@ function ThreadPanel({
   const [loading, setLoading] = useState(false);
   const [installing, setInstalling] = useState<Set<string>>(new Set());
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
-  const [route, setRoute] = useState<PanelRoute>("home");
+  const [route, setRoute] = useState<PanelRoute>({ kind: "home" });
 
   // Reset to home whenever the selected agent changes.
   useEffect(() => {
-    setRoute("home");
+    setRoute({ kind: "home" });
     setInstallErrors({});
   }, [agent?.id]);
+
+  const openPlugin = useCallback(
+    (pluginName: string, marketplace: string, origin: "home" | "marketplace") => {
+      setRoute({ kind: "plugin", pluginName, marketplace, origin });
+    },
+    []
+  );
 
   const load = useCallback(() => {
     if (!agent) return;
@@ -692,16 +707,41 @@ function ThreadPanel({
                 scanning…
               </p>
             )}
-            {agent && data && route === "home" && (
-              <HomeView view={data} onBrowse={() => setRoute("marketplace")} />
+            {agent && data && route.kind === "home" && (
+              <HomeView
+                view={data}
+                onBrowse={() => setRoute({ kind: "marketplace" })}
+                onOpenPlugin={(name, mp) => openPlugin(name, mp, "home")}
+              />
             )}
-            {agent && data && route === "marketplace" && (
+            {agent && data && route.kind === "marketplace" && (
               <MarketplaceView
                 view={data}
                 installing={installing}
                 errors={installErrors}
                 onInstall={install}
-                onBack={() => setRoute("home")}
+                onOpenPlugin={(name, mp) => openPlugin(name, mp, "marketplace")}
+                onBack={() => setRoute({ kind: "home" })}
+              />
+            )}
+            {agent && data && route.kind === "plugin" && (
+              <PluginDetailView
+                view={data}
+                pluginName={route.pluginName}
+                marketplace={route.marketplace}
+                installing={installing.has(
+                  `${route.pluginName}@${route.marketplace}`
+                )}
+                error={
+                  installErrors[`${route.pluginName}@${route.marketplace}`]
+                }
+                onInstall={install}
+                onBack={() =>
+                  setRoute({
+                    kind: route.origin === "marketplace" ? "marketplace" : "home",
+                  })
+                }
+                backLabel={route.origin === "marketplace" ? "Marketplace" : "Installed"}
               />
             )}
           </div>
@@ -727,7 +767,14 @@ function PanelHeader({
       : view.source === "inherited"
         ? `inherited · ${view.source_id}`
         : "global ~/.claude";
-  const crumb = route === "home" ? "Installed" : "Installed · Marketplace";
+  const crumb =
+    route.kind === "home"
+      ? "Installed"
+      : route.kind === "marketplace"
+        ? "Installed · Marketplace"
+        : route.origin === "marketplace"
+          ? "Marketplace · Plugin"
+          : "Installed · Plugin";
   return (
     <div className="px-8 pt-10 pb-5 border-b border-border/50">
       <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
@@ -748,9 +795,11 @@ function PanelHeader({
 function HomeView({
   view,
   onBrowse,
+  onOpenPlugin,
 }: {
   view: ClaudeDirView;
   onBrowse: () => void;
+  onOpenPlugin: (plugin: string, marketplace: string) => void;
 }) {
   const skills = view.skills ?? [];
   const agents = view.agents ?? [];
@@ -781,7 +830,11 @@ function HomeView({
       {plugins.length > 0 && (
         <Section icon={Package} label="Plugins" count={plugins.length}>
           {plugins.map((p) => (
-            <PluginRow key={`${p.name}@${p.marketplace}`} plugin={p} />
+            <PluginRow
+              key={`${p.name}@${p.marketplace}`}
+              plugin={p}
+              onOpen={() => onOpenPlugin(p.name, p.marketplace)}
+            />
           ))}
         </Section>
       )}
@@ -826,12 +879,14 @@ function MarketplaceView({
   installing,
   errors,
   onInstall,
+  onOpenPlugin,
   onBack,
 }: {
   view: ClaudeDirView;
   installing: Set<string>;
   errors: Record<string, string>;
   onInstall: (plugin: string, marketplace: string) => void;
+  onOpenPlugin: (plugin: string, marketplace: string) => void;
   onBack: () => void;
 }) {
   const markets = view.marketplaces ?? [];
@@ -860,11 +915,135 @@ function MarketplaceView({
                 installing={installing.has(key)}
                 error={errors[key]}
                 onInstall={onInstall}
+                onOpen={() => onOpenPlugin(mp.name, m.name)}
               />
             );
           })}
         </Section>
       ))}
+    </div>
+  );
+}
+
+function PluginDetailView({
+  view,
+  pluginName,
+  marketplace,
+  installing,
+  error,
+  onInstall,
+  onBack,
+  backLabel,
+}: {
+  view: ClaudeDirView;
+  pluginName: string;
+  marketplace: string;
+  installing: boolean;
+  error?: string;
+  onInstall: (plugin: string, marketplace: string) => void;
+  onBack: () => void;
+  backLabel: string;
+}) {
+  const installed = (view.plugins ?? []).find(
+    (p) => p.name === pluginName && p.marketplace === marketplace
+  );
+  const market = (view.marketplaces ?? [])
+    .find((m) => m.name === marketplace)
+    ?.plugins.find((p) => p.name === pluginName);
+
+  const title = pluginName;
+  const description = installed?.description || market?.description;
+  const author = installed?.author;
+  const version = installed?.version;
+  const category = market?.category;
+  const isInstalled = !!installed;
+  const enabled = installed?.enabled ?? false;
+
+  return (
+    <div className="px-8 py-6 space-y-6">
+      <BackCrumb label={backLabel} onClick={onBack} />
+
+      <header className="space-y-2">
+        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
+          <Package className="w-3 h-3" strokeWidth={1.8} />
+          Plugin
+        </div>
+        <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
+          {title}
+        </h3>
+        <div className="text-[11px] text-muted-foreground font-mono truncate">
+          {[marketplace, version ? `v${version}` : null, author ? `by ${author}` : null]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+        {category && (
+          <div className="text-[10px] tracking-[0.22em] uppercase text-muted-foreground">
+            {category}
+          </div>
+        )}
+      </header>
+
+      <div className="flex items-center gap-2">
+        {isInstalled ? (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[10px] tracking-[0.22em] uppercase ring-1",
+              enabled
+                ? "ring-[color:var(--matcha-soft)] text-[color:var(--primary)] bg-[color:var(--matcha-soft)]/50"
+                : "ring-border/70 text-muted-foreground"
+            )}
+          >
+            {enabled ? "installed · enabled" : "installed · disabled"}
+          </span>
+        ) : (
+          <button
+            type="button"
+            disabled={installing}
+            onClick={() => onInstall(pluginName, marketplace)}
+            className={cn(
+              "inline-flex items-center gap-1.5 h-7 px-3 rounded-md bg-background ring-1 transition text-[10px] tracking-[0.22em] uppercase disabled:opacity-40",
+              error
+                ? "ring-[color:var(--clay)]/40 text-[color:var(--clay)] hover:ring-[color:var(--clay)]/70"
+                : "ring-border/70 text-foreground hover:ring-border"
+            )}
+          >
+            {installing ? "installing…" : error ? "Retry install" : (
+              <>
+                <Plus className="w-3 h-3" strokeWidth={1.8} />
+                Install
+              </>
+            )}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <p className="text-[11px] leading-snug text-[color:var(--clay)]/90">
+          {error}
+        </p>
+      )}
+
+      {description && (
+        <section>
+          <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-2">
+            About
+          </div>
+          <p className="text-[13px] leading-relaxed text-foreground/90">
+            {description}
+          </p>
+        </section>
+      )}
+
+      <section>
+        <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-2">
+          Setup
+        </div>
+        <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+          {isInstalled
+            ? "No additional setup required. Claude Code will load this plugin on its next start."
+            : "Install the plugin first to see any setup steps."}
+        </p>
+      </section>
     </div>
   );
 }
@@ -921,9 +1100,15 @@ function BackCrumb({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
-function PluginRow({ plugin }: { plugin: Plugin }) {
+function PluginRow({
+  plugin,
+  onOpen,
+}: {
+  plugin: Plugin;
+  onOpen: () => void;
+}) {
   return (
-    <ExpandableRow
+    <NavRow
       title={plugin.name}
       suffix={
         !plugin.enabled ? (
@@ -932,14 +1117,8 @@ function PluginRow({ plugin }: { plugin: Plugin }) {
           </span>
         ) : null
       }
-      expandable={!!plugin.description}
-    >
-      {plugin.description && (
-        <p className="text-[12px] leading-relaxed text-muted-foreground">
-          {plugin.description}
-        </p>
-      )}
-    </ExpandableRow>
+      onClick={onOpen}
+    />
   );
 }
 
@@ -949,12 +1128,14 @@ function MarketRow({
   installing,
   error,
   onInstall,
+  onOpen,
 }: {
   plugin: MarketPlugin;
   marketplace: string;
   installing: boolean;
   error?: string;
   onInstall: (plugin: string, marketplace: string) => void;
+  onOpen: () => void;
 }) {
   const trailing = plugin.installed ? (
     <span className="shrink-0 text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
@@ -985,23 +1166,64 @@ function MarketRow({
     </button>
   );
   return (
-    <ExpandableRow
+    <NavRow
       title={plugin.name}
-      trailing={trailing}
       meta={plugin.category}
-      expandable={!!plugin.description || !!error}
+      trailing={trailing}
+      onClick={onOpen}
+    />
+  );
+}
+
+// NavRow is a clickable row that navigates elsewhere (vs ExpandableRow
+// which toggles inline content). Trailing actions stopPropagation so
+// they don't trigger the row's onClick.
+function NavRow({
+  title,
+  suffix,
+  meta,
+  trailing,
+  onClick,
+}: {
+  title: string;
+  suffix?: React.ReactNode;
+  meta?: string | null;
+  trailing?: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="group cursor-pointer flex items-start gap-3 py-3"
     >
-      {plugin.description && (
-        <p className="text-[12px] leading-relaxed text-muted-foreground">
-          {plugin.description}
-        </p>
-      )}
-      {error && (
-        <p className="mt-2 text-[11px] leading-snug text-[color:var(--clay)]/90">
-          {error}
-        </p>
-      )}
-    </ExpandableRow>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[13px] font-medium text-foreground truncate">
+            {title}
+          </span>
+          {suffix}
+        </div>
+        {meta && (
+          <div className="mt-0.5 text-[10px] text-muted-foreground font-mono truncate">
+            {meta}
+          </div>
+        )}
+      </div>
+      {trailing}
+      <ChevronRight
+        className="shrink-0 mt-1 text-muted-foreground/70 opacity-0 group-hover:opacity-100 transition-opacity"
+        size={13}
+        strokeWidth={1.8}
+      />
+    </div>
   );
 }
 
