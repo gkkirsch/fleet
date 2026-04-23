@@ -695,7 +695,7 @@ function ThreadPanel({
     >
       {open && (
         <div className="h-full flex flex-col">
-          {route.kind !== "plugin" && (
+          {route.kind === "home" && (
             <PanelHeader agent={agent} view={data} route={route} />
           )}
           <div className="flex-1 min-h-0 overflow-y-auto">
