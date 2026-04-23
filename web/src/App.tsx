@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, BookOpen, ChevronRight, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, KeyRound, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
-import type { Agent, ClaudeDirView, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
+import type { Agent, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
 
 const POLL_MS = 2000;
 const PANEL_STORAGE_KEY = "fleetview-thread-panel-open";
@@ -695,7 +695,9 @@ function ThreadPanel({
     >
       {open && (
         <div className="h-full flex flex-col">
-          <PanelHeader agent={agent} view={data} route={route} />
+          {route.kind !== "plugin" && (
+            <PanelHeader agent={agent} view={data} route={route} />
+          )}
           <div className="flex-1 min-h-0 overflow-y-auto">
             {!agent && (
               <p className="px-8 py-6 text-sm italic text-muted-foreground">
@@ -1038,12 +1040,181 @@ function PluginDetailView({
         <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-2">
           Setup
         </div>
-        <p className="text-[12px] leading-relaxed text-muted-foreground italic">
-          {isInstalled
-            ? "No additional setup required. Claude Code will load this plugin on its next start."
-            : "Install the plugin first to see any setup steps."}
-        </p>
+        {!isInstalled && (
+          <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+            Install the plugin first to see any setup steps.
+          </p>
+        )}
+        {isInstalled && (!installed?.credentials || installed.credentials.length === 0) && (
+          <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+            No credentials required. Claude Code will load this plugin on its next start.
+          </p>
+        )}
+        {isInstalled && installed?.credentials && installed.credentials.length > 0 && (
+          <CredentialForm
+            agentId={view.source === "global" ? "" : view.source_id || ""}
+            plugin={pluginName}
+            marketplace={marketplace}
+            credentials={installed.credentials}
+          />
+        )}
       </section>
+    </div>
+  );
+}
+
+// CredentialForm renders one field per declared credential. Values save
+// on blur via POST /api/agents/:id/credentials → macOS Keychain.
+// Existing values aren't pulled back (the keychain doesn't expose them
+// here); the field only tracks saved/required state.
+function CredentialForm({
+  agentId,
+  plugin,
+  marketplace,
+  credentials,
+}: {
+  agentId: string;
+  plugin: string;
+  marketplace: string;
+  credentials: CredentialDecl[];
+}) {
+  return (
+    <div className="space-y-4">
+      {credentials.map((c) => (
+        <CredentialField
+          key={c.key}
+          agentId={agentId}
+          plugin={plugin}
+          marketplace={marketplace}
+          decl={c}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CredentialField({
+  agentId,
+  plugin,
+  marketplace,
+  decl,
+}: {
+  agentId: string;
+  plugin: string;
+  marketplace: string;
+  decl: CredentialDecl;
+}) {
+  const [value, setValue] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(decl.set);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = useCallback(async () => {
+    if (!value.trim() || !agentId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agents/${agentId}/credentials`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plugin, marketplace, key: decl.key, value }),
+      });
+      if (!r.ok) {
+        setError((await r.text()).trim() || `HTTP ${r.status}`);
+      } else {
+        setSaved(true);
+        setValue("");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [agentId, plugin, marketplace, decl.key, value]);
+
+  const clear = useCallback(async () => {
+    if (!agentId) return;
+    await fetch(`/api/agents/${agentId}/credentials`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plugin, marketplace, key: decl.key }),
+    });
+    setSaved(false);
+    setValue("");
+  }, [agentId, plugin, marketplace, decl.key]);
+
+  const placeholder = saved ? "•••••• saved in Keychain — enter to replace" : "—";
+
+  return (
+    <div>
+      <div className="flex items-baseline gap-2">
+        <label className="text-[12px] font-medium text-foreground">
+          {decl.label || decl.key}
+        </label>
+        {decl.required && (
+          <span className="text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+            required
+          </span>
+        )}
+        {saved && (
+          <span className="inline-flex items-center gap-1 text-[9px] tracking-[0.22em] uppercase text-[color:var(--primary)]">
+            <Check className="w-2.5 h-2.5" strokeWidth={2.2} />
+            saved
+          </span>
+        )}
+      </div>
+      {decl.description && (
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+          {decl.description}
+        </p>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <div className="flex-1 flex items-center gap-2 h-9 px-3 rounded-lg bg-background ring-1 ring-border/70 focus-within:ring-border">
+          <KeyRound className="w-3.5 h-3.5 text-muted-foreground shrink-0" strokeWidth={1.8} />
+          <input
+            type={reveal ? "text" : "password"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={save}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            placeholder={placeholder}
+            className="flex-1 min-w-0 bg-transparent outline-none text-[12px] text-foreground placeholder:text-muted-foreground/60 font-mono"
+          />
+          {value && (
+            <button
+              type="button"
+              onClick={() => setReveal((r) => !r)}
+              title={reveal ? "Hide" : "Show"}
+              className="text-muted-foreground hover:text-foreground shrink-0"
+            >
+              {reveal ? (
+                <EyeOff className="w-3.5 h-3.5" strokeWidth={1.8} />
+              ) : (
+                <Eye className="w-3.5 h-3.5" strokeWidth={1.8} />
+              )}
+            </button>
+          )}
+        </div>
+        {saved && !value && (
+          <button
+            type="button"
+            onClick={clear}
+            title="Remove from Keychain"
+            className="text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-[color:var(--clay)] transition-colors"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {saving && (
+        <p className="mt-1 text-[10px] italic text-muted-foreground">saving…</p>
+      )}
+      {error && (
+        <p className="mt-1 text-[11px] text-[color:var(--clay)]/90">{error}</p>
+      )}
     </div>
   );
 }

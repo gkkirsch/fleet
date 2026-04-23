@@ -43,12 +43,24 @@ type MemoryDoc struct {
 
 // Plugin is a plugin already installed in the agent's .claude dir.
 type Plugin struct {
-	Name        string `json:"name"`
-	Marketplace string `json:"marketplace"`
-	Version     string `json:"version,omitempty"`
+	Name        string           `json:"name"`
+	Marketplace string           `json:"marketplace"`
+	Version     string           `json:"version,omitempty"`
+	Description string           `json:"description,omitempty"`
+	Author      string           `json:"author,omitempty"`
+	Enabled     bool             `json:"enabled"`
+	Credentials []CredentialDecl `json:"credentials,omitempty"`
+}
+
+// CredentialDecl comes from a plugin's .claude-plugin/credentials.json.
+// `Set` is derived at scan time — whether a value has been saved to the
+// user's macOS Keychain for this (agent, plugin, key) tuple.
+type CredentialDecl struct {
+	Key         string `json:"key"`
+	Label       string `json:"label,omitempty"`
 	Description string `json:"description,omitempty"`
-	Author      string `json:"author,omitempty"`
-	Enabled     bool   `json:"enabled"`
+	Required    bool   `json:"required,omitempty"`
+	Set         bool   `json:"set"`
 }
 
 // Marketplace lists plugins a user could install. Space-isolated: we only
@@ -122,11 +134,11 @@ func findOrchAncestor(startID string, all []Agent) string {
 
 // --- scanning --------------------------------------------------------------
 
-func scanClaudeDir(dir string) (skills []Skill, agents, commands []NamedMD, plugins []Plugin, markets []Marketplace, memory *MemoryDoc) {
+func scanClaudeDir(dir, agentID string) (skills []Skill, agents, commands []NamedMD, plugins []Plugin, markets []Marketplace, memory *MemoryDoc) {
 	skills = scanSkills(filepath.Join(dir, "skills"))
 	agents = scanMDFolder(filepath.Join(dir, "agents"))
 	commands = scanMDFolder(filepath.Join(dir, "commands"))
-	plugins = scanInstalledPlugins(dir)
+	plugins = scanInstalledPluginsForAgent(dir, agentID)
 	markets = scanMarketplaces(dir, plugins)
 	memory = readMemory(filepath.Join(dir, "CLAUDE.md"))
 	return
@@ -137,6 +149,13 @@ func scanClaudeDir(dir string) (skills []Skill, agents, commands []NamedMD, plug
 // scanInstalledPlugins reads installed_plugins.json + settings.json in dir.
 // Returns entries with plugin.json-derived description/author when present.
 func scanInstalledPlugins(dir string) []Plugin {
+	return scanInstalledPluginsForAgent(dir, "")
+}
+
+// scanInstalledPluginsForAgent is the flavor that also populates each
+// plugin's credential `set` flag against a keychain scoped to `agentID`.
+// Agent id may be empty — then `set` is always false.
+func scanInstalledPluginsForAgent(dir, agentID string) []Plugin {
 	ipPath := filepath.Join(dir, "plugins", "installed_plugins.json")
 	b, err := os.ReadFile(ipPath)
 	if err != nil {
@@ -168,6 +187,7 @@ func scanInstalledPlugins(dir string) []Plugin {
 			p.Description = meta.Description
 			p.Author = meta.AuthorName
 		}
+		p.Credentials = readPluginCredentials(entries[0].InstallPath, agentID, p.Name, p.Marketplace)
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -467,7 +487,7 @@ func handleClaude(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	dir, source, sourceID := effectiveClaudeDir(*a, all)
-	skills, agents, commands, plugins, markets, memory := scanClaudeDir(dir)
+	skills, agents, commands, plugins, markets, memory := scanClaudeDir(dir, a.ID)
 	writeJSON(w, ClaudeDirView{
 		Source:       source,
 		SourceID:     sourceID,

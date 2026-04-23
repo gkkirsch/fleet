@@ -40,6 +40,14 @@ export interface MemoryDoc {
   preview?: string;
 }
 
+export interface CredentialDecl {
+  key: string;
+  label?: string;
+  description?: string;
+  required?: boolean;
+  set: boolean;
+}
+
 export interface Plugin {
   name: string;
   marketplace: string;
@@ -47,6 +55,7 @@ export interface Plugin {
   description?: string;
   author?: string;
   enabled: boolean;
+  credentials?: CredentialDecl[];
 }
 
 export interface MarketPlugin {
