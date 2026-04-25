@@ -217,7 +217,7 @@ function Sidebar({
           </span>
         )}
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-8 space-y-2">
+      <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pb-8 space-y-2">
         {agents === null && (
           <p className="text-muted-foreground text-sm px-4 py-6 italic">loading…</p>
         )}
@@ -399,7 +399,7 @@ function MessageStream({
   const isStreaming = agent.status === "streaming" || isPending;
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
+    <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
       <div className="max-w-3xl mx-auto">
         <div className="mb-3">
           <KindTile kind={agent.kind} size={54} />
@@ -698,7 +698,7 @@ function ThreadPanel({
           {route.kind === "home" && (
             <PanelHeader agent={agent} view={data} route={route} />
           )}
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto">
             {!agent && (
               <p className="px-8 py-6 text-sm italic text-muted-foreground">
                 select an agent
