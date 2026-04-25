@@ -160,13 +160,14 @@ export function App() {
       <div
         className={cn(
           "shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out",
-          sidebar.open ? "w-[280px]" : "w-0"
+          sidebar.open ? "w-[280px]" : "w-[56px]"
         )}
       >
         <Sidebar
           agents={agents}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          collapsed={!sidebar.open}
         />
       </div>
       <div className="flex-1 min-w-0">
@@ -265,14 +266,44 @@ function Sidebar({
   agents,
   selectedId,
   onSelect,
+  collapsed = false,
 }: {
   agents: Agent[] | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  collapsed?: boolean;
 }) {
   const tree = useMemo(() => buildTree(agents ?? []), [agents]);
+
+  if (collapsed) {
+    // Rail mode: just the kind tiles, clickable, vertically
+    // arranged. Width matches the wrapper's w-[56px]; hover tooltip
+    // surfaces the agent id.
+    const ordered = flattenTree(tree);
+    return (
+      <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center pt-[80px] pb-6 gap-1.5 overflow-hidden">
+        {ordered.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onSelect(a.id)}
+            title={a.id}
+            className={cn(
+              "rounded-lg p-1.5 transition-colors",
+              a.id === selectedId
+                ? "bg-card shadow-sm ring-1 ring-border/70"
+                : "hover:bg-sidebar-accent/60"
+            )}
+          >
+            <KindTile kind={a.kind} size={24} />
+          </button>
+        ))}
+      </aside>
+    );
+  }
+
   return (
-    <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0">
+    <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px]">
       <div className="px-8 pt-10 pb-6 flex items-baseline justify-between">
         <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
           Fleet
@@ -302,6 +333,19 @@ function Sidebar({
       </div>
     </aside>
   );
+}
+
+// Walk the tree depth-first into a flat ordered list, preserving the
+// dispatcher → orchestrators → workers grouping. Used by the
+// collapsed rail.
+function flattenTree(tree: Tree): Agent[] {
+  const out: Agent[] = [];
+  const walk = (a: Agent) => {
+    out.push(a);
+    for (const k of tree.children.get(a.id) ?? []) walk(k);
+  };
+  for (const r of tree.roots) walk(r);
+  return out;
 }
 
 function AgentNode({
