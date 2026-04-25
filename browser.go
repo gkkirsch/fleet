@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -94,6 +95,11 @@ func launchChrome(orchID string) (port int, profile string, err error) {
 	if err := os.MkdirAll(profile, 0o755); err != nil {
 		return port, profile, err
 	}
+	if err := writeProfileIdentity(profile, orchID); err != nil {
+		// Non-fatal — Chrome will still launch, just without the
+		// per-space name/color tint.
+		fmt.Fprintf(os.Stderr, "browser: writeProfileIdentity %s: %v\n", orchID, err)
+	}
 	chrome := chromeBinary()
 	if chrome == "" {
 		return port, profile, fmt.Errorf("Google Chrome not found on this system")
@@ -125,6 +131,98 @@ func launchChrome(orchID string) (port int, profile string, err error) {
 		time.Sleep(150 * time.Millisecond)
 	}
 	return port, profile, nil
+}
+
+// writeProfileIdentity sets the profile name (= orch ID) and a
+// deterministic theme color in <profile>/Default/Preferences. Chrome
+// reads this on launch when there's no Secure Preferences yet, so a
+// fresh profile picks up our name+tint and you can tell the windows
+// apart at a glance. Existing prefs are merged, not clobbered.
+func writeProfileIdentity(profileDir, orchID string) error {
+	defaultDir := filepath.Join(profileDir, "Default")
+	if err := os.MkdirAll(defaultDir, 0o755); err != nil {
+		return err
+	}
+	prefsPath := filepath.Join(defaultDir, "Preferences")
+	prefs := map[string]any{}
+	if b, err := os.ReadFile(prefsPath); err == nil {
+		_ = json.Unmarshal(b, &prefs)
+	}
+	profile, _ := prefs["profile"].(map[string]any)
+	if profile == nil {
+		profile = map[string]any{}
+	}
+	profile["name"] = orchID
+	profile["using_default_name"] = false
+	profile["using_default_avatar"] = false
+	profile["using_gaia_avatar"] = false
+	prefs["profile"] = profile
+
+	browser, _ := prefs["browser"].(map[string]any)
+	if browser == nil {
+		browser = map[string]any{}
+	}
+	theme, _ := browser["theme"].(map[string]any)
+	if theme == nil {
+		theme = map[string]any{}
+	}
+	theme["user_color"] = colorForOrch(orchID)
+	browser["theme"] = theme
+	prefs["browser"] = browser
+
+	out, err := json.MarshalIndent(prefs, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(prefsPath, out, 0o644)
+}
+
+// colorForOrch returns Chrome's packed RGB int (R<<16 | G<<8 | B) from a
+// deterministic hue derived from the orch ID. Saturation and lightness
+// are fixed so all spaces sit in the same vibe.
+func colorForOrch(orchID string) int {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(orchID))
+	hue := float64(h.Sum32()%360) / 360.0
+	r, g, b := hslToRGB(hue, 0.55, 0.55)
+	return (r << 16) | (g << 8) | b
+}
+
+func hslToRGB(h, s, l float64) (int, int, int) {
+	if s == 0 {
+		v := int(math.Round(l * 255))
+		return v, v, v
+	}
+	var q float64
+	if l < 0.5 {
+		q = l * (1 + s)
+	} else {
+		q = l + s - l*s
+	}
+	p := 2*l - q
+	r := hueToRGB(p, q, h+1.0/3)
+	g := hueToRGB(p, q, h)
+	b := hueToRGB(p, q, h-1.0/3)
+	return int(math.Round(r * 255)), int(math.Round(g * 255)), int(math.Round(b * 255))
+}
+
+func hueToRGB(p, q, t float64) float64 {
+	if t < 0 {
+		t += 1
+	}
+	if t > 1 {
+		t -= 1
+	}
+	if t < 1.0/6 {
+		return p + (q-p)*6*t
+	}
+	if t < 1.0/2 {
+		return q
+	}
+	if t < 2.0/3 {
+		return p + (q-p)*(2.0/3-t)*6
+	}
+	return p
 }
 
 func chromeBinary() string {
