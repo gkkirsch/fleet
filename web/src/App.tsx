@@ -293,6 +293,11 @@ function AgentNode({
 }) {
   const kids = tree.children.get(agent.id) ?? [];
   const isSelected = agent.id === selectedId;
+  const isWorker = agent.kind === "worker";
+  // Dispatchers and orchestrators read better as a name + status only;
+  // descriptions belong on workers where their narrow scope is the
+  // distinguishing detail.
+  const showDescription = isWorker && !!agent.description;
   const stateHint =
     agent.status === "streaming"
       ? "streaming"
@@ -302,32 +307,40 @@ function AgentNode({
       ? "stopped"
       : null;
 
+  // Visual hierarchy: dispatch and orchestrators sit at the same
+  // root indent (workers under their orchestrator stay nested). The
+  // dispatcher is the only "header" and gets a small gap below it
+  // before its orchestrator children to feel like a section.
+  const isDispatcher = agent.kind === "dispatcher";
+  const kidIndent = isDispatcher ? "" : "ml-5 mt-1 space-y-1";
+  const kidsTopGap = isDispatcher ? "mt-2.5 space-y-1" : "";
+
   return (
-    <div>
+    <div className={isDispatcher && depth === 0 ? "pb-1.5" : ""}>
       <button
         type="button"
         onClick={() => onSelect(agent.id)}
         className={cn(
-          "w-full text-left flex items-start gap-3.5 px-3.5 py-3 rounded-xl transition-colors duration-150",
+          "w-full text-left flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg transition-colors duration-150",
           isSelected
             ? "bg-card shadow-sm ring-1 ring-border/70"
             : "hover:bg-sidebar-accent/60"
         )}
       >
-        <KindTile kind={agent.kind} />
-        <div className="min-w-0 flex-1 pt-0.5">
-          <div className="font-mono text-[13px] font-medium tracking-tight text-foreground truncate">
+        <KindTile kind={agent.kind} size={26} />
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-[12.5px] font-medium tracking-tight text-foreground truncate">
             {agent.id}
           </div>
-          {agent.description && (
-            <div className="text-[12.5px] text-muted-foreground line-clamp-2 mt-0.5 leading-snug">
+          {showDescription && (
+            <div className="text-[11.5px] text-muted-foreground line-clamp-2 mt-0.5 leading-snug">
               {agent.description}
             </div>
           )}
           {stateHint && (
             <div
               className={cn(
-                "text-[11px] mt-1.5 tracking-wide",
+                "text-[10.5px] mt-0.5 tracking-wide",
                 agent.status === "streaming"
                   ? "text-[color:var(--ochre)] animate-soft-pulse"
                   : agent.status === "trust-dialog" || agent.status === "permission-dialog"
@@ -341,7 +354,7 @@ function AgentNode({
         </div>
       </button>
       {kids.length > 0 && (
-        <div className="ml-6 mt-1 space-y-1.5 relative">
+        <div className={cn(kidIndent, kidsTopGap, "relative")}>
           {kids.map((k) => (
             <AgentNode
               key={k.id}
