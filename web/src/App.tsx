@@ -306,7 +306,7 @@ function Sidebar({
     <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px]">
       <div className="px-8 pt-10 pb-6 flex items-baseline justify-between">
         <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
-          Fleet
+          Rooster
         </h1>
         {agents !== null && (
           <span className="text-xs tabular-nums text-muted-foreground font-mono">
