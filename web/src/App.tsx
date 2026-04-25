@@ -563,8 +563,10 @@ function MessageRow({ m }: { m: Message }) {
     );
   }
   if (m.role === "assistant") {
+    // Left indent matches where the avatar tile used to sit (34px tile + 12px gap)
+    // so removing the tile didn't pull the text flush to the row edge.
     return (
-      <div className="max-w-[78%] py-1 text-foreground text-[15px] leading-relaxed break-words">
+      <div className="max-w-[78%] pl-[46px] py-1 text-foreground text-[15px] leading-relaxed break-words">
         <Markdown tone="light">{m.text || ""}</Markdown>
       </div>
     );
