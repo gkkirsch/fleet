@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -589,7 +589,7 @@ function Markdown({ children, tone }: { children: string; tone: "light" | "dark"
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkBreaks]}
       components={{
-        p: ({ children }) => <p className="my-1 first:mt-0 last:mb-0">{children}</p>,
+        p: ({ children }) => <p className="my-1 first:mt-0 last:mb-0">{withIcons(children)}</p>,
         strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
         a: ({ href, children }) => (
@@ -621,13 +621,13 @@ function Markdown({ children, tone }: { children: string; tone: "light" | "dark"
         ),
         ul: ({ children }) => <ul className="my-1 list-disc pl-5 space-y-0.5 marker:opacity-60">{children}</ul>,
         ol: ({ children }) => <ol className="my-1 list-decimal pl-5 space-y-0.5 marker:opacity-60">{children}</ol>,
-        li: ({ children }) => <li className="pl-0.5">{children}</li>,
-        h1: ({ children }) => <h3 className="text-[1.06em] font-semibold mt-3 mb-1 first:mt-0">{children}</h3>,
-        h2: ({ children }) => <h3 className="text-[1.03em] font-semibold mt-3 mb-1 first:mt-0">{children}</h3>,
-        h3: ({ children }) => <h3 className="text-[1.0em] font-semibold mt-2 mb-1 first:mt-0">{children}</h3>,
-        h4: ({ children }) => <h4 className="text-[0.97em] font-semibold mt-2 mb-1 first:mt-0">{children}</h4>,
+        li: ({ children }) => <li className="pl-0.5">{withIcons(children)}</li>,
+        h1: ({ children }) => <h3 className="font-[family-name:var(--font-heading)] text-[1.18em] tracking-tight mt-3 mb-1 first:mt-0">{withIcons(children)}</h3>,
+        h2: ({ children }) => <h3 className="font-[family-name:var(--font-heading)] text-[1.12em] tracking-tight mt-3 mb-1 first:mt-0">{withIcons(children)}</h3>,
+        h3: ({ children }) => <h3 className="font-[family-name:var(--font-heading)] text-[1.06em] tracking-tight mt-2 mb-1 first:mt-0">{withIcons(children)}</h3>,
+        h4: ({ children }) => <h4 className="font-[family-name:var(--font-heading)] text-[1.02em] tracking-tight mt-2 mb-1 first:mt-0">{withIcons(children)}</h4>,
         blockquote: ({ children }) => (
-          <blockquote className={`my-2 pl-3 ${styles.quoteBorder} italic opacity-90`}>{children}</blockquote>
+          <blockquote className={`my-2 pl-3 ${styles.quoteBorder} italic opacity-90`}>{withIcons(children)}</blockquote>
         ),
         hr: () => <hr className={`my-3 ${styles.hrColor}`} />,
         table: ({ children }) => (
@@ -635,13 +635,81 @@ function Markdown({ children, tone }: { children: string; tone: "light" | "dark"
             <table className="text-[0.92em] border-collapse">{children}</table>
           </div>
         ),
-        th: ({ children }) => <th className={`px-2 py-1 text-left font-semibold ${styles.tableBorder}`}>{children}</th>,
-        td: ({ children }) => <td className={`px-2 py-1 ${styles.tableBorder}`}>{children}</td>,
+        th: ({ children }) => <th className={`px-2 py-1 text-left font-semibold ${styles.tableBorder}`}>{withIcons(children)}</th>,
+        td: ({ children }) => <td className={`px-2 py-1 ${styles.tableBorder}`}>{withIcons(children)}</td>,
       }}
     >
       {children}
     </ReactMarkdown>
   );
+}
+
+// Inline icon swap for the most common emojis Claude sprinkles into
+// chat — keeps the rest of the message untouched. Only walks through
+// block-element children (p, li, td, blockquote, headings) so code
+// blocks and `inline code` are never rewritten.
+type IconComponent = React.ComponentType<{ className?: string; strokeWidth?: number }>;
+
+const ICON_FOR_CHAR: Record<string, { Icon: IconComponent; tone: string }> = {
+  "✓": { Icon: Check as IconComponent, tone: "text-[var(--matcha)]" },
+  "✗": { Icon: XIcon as IconComponent, tone: "" },
+  "✘": { Icon: XIcon as IconComponent, tone: "" },
+  "⚠": { Icon: TriangleAlert as IconComponent, tone: "" },
+  "⚠️": { Icon: TriangleAlert as IconComponent, tone: "" },
+};
+
+function withIcons(node: React.ReactNode): React.ReactNode {
+  if (typeof node === "string") return replaceEmojiInString(node);
+  if (Array.isArray(node)) {
+    return node.map((c, i) => <React.Fragment key={i}>{withIcons(c)}</React.Fragment>);
+  }
+  if (React.isValidElement(node)) {
+    const props = node.props as { children?: React.ReactNode };
+    if (props.children !== undefined) {
+      return React.cloneElement(
+        node as React.ReactElement<{ children?: React.ReactNode }>,
+        undefined,
+        withIcons(props.children),
+      );
+    }
+  }
+  return node;
+}
+
+function replaceEmojiInString(text: string): React.ReactNode {
+  const out: React.ReactNode[] = [];
+  let buf = "";
+  let i = 0;
+  const flush = () => {
+    if (buf) {
+      out.push(buf);
+      buf = "";
+    }
+  };
+  while (i < text.length) {
+    // Two-char (⚠ + variation selector U+FE0F) takes precedence.
+    const two = text.slice(i, i + 2);
+    const matched = ICON_FOR_CHAR[two] ? two : ICON_FOR_CHAR[text[i]] ? text[i] : null;
+    if (matched) {
+      flush();
+      const { Icon, tone } = ICON_FOR_CHAR[matched];
+      out.push(
+        <Icon
+          key={`ic-${i}`}
+          className={`inline-block w-[1em] h-[1em] align-text-bottom ${tone}`.trim()}
+          strokeWidth={2}
+        />,
+      );
+      i += matched.length;
+      continue;
+    }
+    buf += text[i];
+    i++;
+  }
+  flush();
+  if (out.length === 0) return text;
+  if (out.length === 1 && typeof out[0] === "string") return out[0];
+  return <>{out}</>;
 }
 
 const MARKDOWN_TONE = {
