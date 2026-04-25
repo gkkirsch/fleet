@@ -482,10 +482,9 @@ function TopNav({
         type="button"
         onClick={onToggleSidebar}
         title={sidebarOpen ? "Collapse fleet" : "Expand fleet"}
-        className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+        className="text-muted-foreground hover:text-foreground transition-colors"
       >
-        <SidebarIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
-        <span>Fleet</span>
+        <SidebarIcon className="w-4 h-4" strokeWidth={1.8} />
       </button>
       <div className="flex items-center justify-end gap-5">
       {agent && <BrowserButton agent={agent} />}
