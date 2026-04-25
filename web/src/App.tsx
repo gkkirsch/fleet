@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
 import type { Agent, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
@@ -553,24 +556,114 @@ function MessageRow({ m, agent }: { m: Message; agent: Agent }) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-[20px] rounded-br-md px-5 py-3 bg-secondary text-foreground text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-          {cleanUserText(m.text)}
+        <div className="max-w-[78%] rounded-[20px] rounded-br-md px-5 py-3 bg-secondary text-foreground text-[15px] leading-relaxed break-words">
+          <Markdown tone="light">{cleanUserText(m.text || "")}</Markdown>
         </div>
       </div>
     );
   }
   if (m.role === "assistant") {
     return (
-      <div className="flex items-end gap-3">
+      <div className="flex items-start gap-3">
         <KindTile kind={agent.kind} size={34} />
-        <div className="max-w-[78%] rounded-[20px] rounded-bl-md px-5 py-3 bg-foreground text-background text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-          {m.text || ""}
+        <div className="max-w-[78%] py-1 text-foreground text-[15px] leading-relaxed break-words">
+          <Markdown tone="light">{m.text || ""}</Markdown>
         </div>
       </div>
     );
   }
   return null;
 }
+
+// ─── markdown ────────────────────────────────────────────────────
+//
+// Subtle, in-bubble markdown rendering. Bold/italic just shift weight
+// and slant; code gets a faint tint that reads against either bubble
+// color; lists indent gently; links underline on hover. Single
+// newlines stay as line breaks (remark-breaks) so plain-text replies
+// render the same as before.
+
+function Markdown({ children, tone }: { children: string; tone: "light" | "dark" }) {
+  const styles = MARKDOWN_TONE[tone];
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkBreaks]}
+      components={{
+        p: ({ children }) => <p className="my-1 first:mt-0 last:mb-0">{children}</p>,
+        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+        em: ({ children }) => <em className="italic">{children}</em>,
+        a: ({ href, children }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`${styles.link} underline-offset-2 hover:underline`}
+          >
+            {children}
+          </a>
+        ),
+        code: ({ className, children }) => {
+          // react-markdown v9: fenced code blocks get a `language-*`
+          // className from rehype; bare `<code>` (inline) does not.
+          if (!className) {
+            return (
+              <code className={`${styles.codeInline} px-[0.35em] py-[0.05em] rounded font-mono text-[0.9em]`}>
+                {children}
+              </code>
+            );
+          }
+          return <code className={`${className} font-mono text-[0.9em]`}>{children}</code>;
+        },
+        pre: ({ children }) => (
+          <pre className={`${styles.codeBlock} my-2 px-3 py-2 rounded-md overflow-x-auto leading-snug`}>
+            {children}
+          </pre>
+        ),
+        ul: ({ children }) => <ul className="my-1 list-disc pl-5 space-y-0.5 marker:opacity-60">{children}</ul>,
+        ol: ({ children }) => <ol className="my-1 list-decimal pl-5 space-y-0.5 marker:opacity-60">{children}</ol>,
+        li: ({ children }) => <li className="pl-0.5">{children}</li>,
+        h1: ({ children }) => <h3 className="text-[1.06em] font-semibold mt-3 mb-1 first:mt-0">{children}</h3>,
+        h2: ({ children }) => <h3 className="text-[1.03em] font-semibold mt-3 mb-1 first:mt-0">{children}</h3>,
+        h3: ({ children }) => <h3 className="text-[1.0em] font-semibold mt-2 mb-1 first:mt-0">{children}</h3>,
+        h4: ({ children }) => <h4 className="text-[0.97em] font-semibold mt-2 mb-1 first:mt-0">{children}</h4>,
+        blockquote: ({ children }) => (
+          <blockquote className={`my-2 pl-3 ${styles.quoteBorder} italic opacity-90`}>{children}</blockquote>
+        ),
+        hr: () => <hr className={`my-3 ${styles.hrColor}`} />,
+        table: ({ children }) => (
+          <div className="my-2 overflow-x-auto">
+            <table className="text-[0.92em] border-collapse">{children}</table>
+          </div>
+        ),
+        th: ({ children }) => <th className={`px-2 py-1 text-left font-semibold ${styles.tableBorder}`}>{children}</th>,
+        td: ({ children }) => <td className={`px-2 py-1 ${styles.tableBorder}`}>{children}</td>,
+      }}
+    >
+      {children}
+    </ReactMarkdown>
+  );
+}
+
+const MARKDOWN_TONE = {
+  // light = the user-side bubble (linen secondary bg, dark text)
+  light: {
+    codeInline: "bg-black/8 text-foreground",
+    codeBlock: "bg-black/8 text-foreground",
+    link: "text-[var(--matcha)]",
+    quoteBorder: "border-l-2 border-foreground/25",
+    hrColor: "border-foreground/15",
+    tableBorder: "border border-foreground/15",
+  },
+  // dark = the assistant-side bubble (foreground bg, light text)
+  dark: {
+    codeInline: "bg-white/12 text-background",
+    codeBlock: "bg-white/12 text-background",
+    link: "text-[var(--matcha-soft)]",
+    quoteBorder: "border-l-2 border-background/30",
+    hrColor: "border-background/20",
+    tableBorder: "border border-background/20",
+  },
+} as const;
 
 function cleanUserText(text?: string): string {
   if (!text) return "";
