@@ -82,3 +82,15 @@ export interface ClaudeDirView {
   marketplaces: Marketplace[] | null;
   memory?: MemoryDoc;
 }
+
+export interface Artifact {
+  id: string;
+  type: string;
+  title?: string;
+  port: number;
+  created: string;
+  path: string;
+  status: "idle" | "installing" | "starting" | "ready" | "crashed" | string;
+  alive: boolean;
+  error?: string;
+}

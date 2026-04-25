@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
-import type { Agent, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
+import type { Agent, Artifact, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
 
 const POLL_MS = 2000;
 const PANEL_STORAGE_KEY = "fleetview-thread-panel-open";
@@ -21,6 +21,26 @@ function useThreadPanel() {
   }, []);
   return {
     open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
+    close: useCallback(() => set(false), [set]),
+  };
+}
+
+const ARTIFACT_PANEL_STORAGE_KEY = "fleetview.artifactPanel.open";
+
+function useArtifactPanel() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(ARTIFACT_PANEL_STORAGE_KEY);
+    return v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(ARTIFACT_PANEL_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
     toggle: useCallback(() => set(!open), [open, set]),
     close: useCallback(() => set(false), [set]),
   };
@@ -31,6 +51,16 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const panel = useThreadPanel();
+  const artifactPanel = useArtifactPanel();
+  // Mutually-exclusive panels — opening one auto-closes the other.
+  const toggleSettings = useCallback(() => {
+    if (!panel.open) artifactPanel.close();
+    panel.toggle();
+  }, [panel, artifactPanel]);
+  const toggleArtifact = useCallback(() => {
+    if (!artifactPanel.open) panel.close();
+    artifactPanel.toggle();
+  }, [panel, artifactPanel]);
   // Map of agent id → timestamp of a just-sent message. Used to show the
   // thinking shimmer immediately, before backend polling catches up to the
   // agent entering "streaming" state. Cleared by the effect below.
@@ -122,12 +152,19 @@ export function App() {
           isPending={isPending}
           onSent={markPending}
           panelOpen={panel.open}
-          onTogglePanel={panel.toggle}
+          onTogglePanel={toggleSettings}
+          artifactPanelOpen={artifactPanel.open}
+          onToggleArtifactPanel={toggleArtifact}
         />
       </div>
       <ThreadPanel
         agent={selected}
         open={panel.open}
+      />
+      <ArtifactPanel
+        agent={selected}
+        open={artifactPanel.open}
+        onClose={artifactPanel.close}
       />
     </div>
   );
@@ -330,6 +367,8 @@ function Detail({
   onSent,
   panelOpen,
   onTogglePanel,
+  artifactPanelOpen,
+  onToggleArtifactPanel,
 }: {
   agent: Agent | null;
   messages: Message[];
@@ -337,6 +376,8 @@ function Detail({
   onSent: (id: string) => void;
   panelOpen: boolean;
   onTogglePanel: () => void;
+  artifactPanelOpen: boolean;
+  onToggleArtifactPanel: () => void;
 }) {
   if (!agent) {
     return (
@@ -347,7 +388,13 @@ function Detail({
   }
   return (
     <section className="flex flex-col h-full min-h-0">
-      <TopNav agent={agent} panelOpen={panelOpen} onTogglePanel={onTogglePanel} />
+      <TopNav
+        agent={agent}
+        panelOpen={panelOpen}
+        onTogglePanel={onTogglePanel}
+        artifactPanelOpen={artifactPanelOpen}
+        onToggleArtifactPanel={onToggleArtifactPanel}
+      />
       <MessageStream agent={agent} messages={messages} isPending={isPending} />
       <NotifyBox agentId={agent.id} onSent={onSent} />
     </section>
@@ -358,15 +405,20 @@ function TopNav({
   agent,
   panelOpen,
   onTogglePanel,
+  artifactPanelOpen,
+  onToggleArtifactPanel,
 }: {
   agent: Agent;
   panelOpen: boolean;
   onTogglePanel: () => void;
+  artifactPanelOpen: boolean;
+  onToggleArtifactPanel: () => void;
 }) {
   const Icon = panelOpen ? PanelRightClose : PanelRight;
   return (
     <div className="flex items-center justify-end gap-5 px-10 pt-8 pb-2">
       <BrowserButton agent={agent} />
+      <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />
       <button
         type="button"
         onClick={onTogglePanel}
@@ -1801,4 +1853,211 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// ─── artifact panel ──────────────────────────────────────────────
+//
+// Each orchestrator can have artifacts: small Vite + React + Tailwind
+// apps the orch scaffolds via `roster artifact create`. fleetview's
+// backend lazily spawns the dev server; this panel shows the list +
+// a live iframe pointing at that server. Vite's HMR keeps the iframe
+// in sync automatically — no postMessage source-pushing needed.
+//
+// V2: a postMessage protocol (annotations on hover, error overlays,
+// resize requests) — reserved here as a stub so the iframe loader
+// stays compatible.
+
+function ArtifactNavButton({
+  agent,
+  open,
+  onToggle,
+}: {
+  agent: Agent;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const [hasAny, setHasAny] = useState(false);
+  const eligible = agent.kind === "orchestrator" || agent.kind === "worker";
+
+  useEffect(() => {
+    if (!eligible) return;
+    let cancelled = false;
+    fetch(`/api/agents/${agent.id}/artifacts`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: Artifact[]) => {
+        if (!cancelled) setHasAny(Array.isArray(d) && d.length > 0);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, eligible]);
+
+  if (!eligible || !hasAny) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={open ? "Hide artifact panel" : "Show artifact panel"}
+      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+    >
+      <span>Artifact</span>
+      <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
+    </button>
+  );
+}
+
+function ArtifactPanel({
+  agent,
+  open,
+  onClose,
+}: {
+  agent: Agent | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<Artifact[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [serving, setServing] = useState<Record<string, Artifact>>({});
+
+  // Load list when opened or agent changes.
+  const refresh = useCallback(() => {
+    if (!agent) return;
+    fetch(`/api/agents/${agent.id}/artifacts`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: Artifact[]) => {
+        const list = Array.isArray(d) ? d : [];
+        setItems(list);
+        setSelectedId((cur) => cur ?? list[0]?.id ?? null);
+      })
+      .catch(() => {});
+  }, [agent?.id]);
+
+  useEffect(() => {
+    if (open && agent) refresh();
+  }, [open, agent?.id, refresh]);
+
+  // Reset selection when agent switches.
+  useEffect(() => {
+    setSelectedId(null);
+    setServing({});
+  }, [agent?.id]);
+
+  // When the panel opens with a selection, kick the dev server and
+  // poll until ready. The backend handles npm install + spawn idempotently.
+  useEffect(() => {
+    if (!open || !agent || !selectedId) return;
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const tick = async () => {
+      const r = await fetch(`/api/agents/${agent.id}/artifacts/${selectedId}/serve`, {
+        method: "POST",
+      }).catch(() => null);
+      if (cancelled || !r) return;
+      const d: Artifact = await r.json().catch(() => null as any);
+      if (cancelled || !d) return;
+      setServing((s) => ({ ...s, [selectedId]: d }));
+      if (d.status !== "ready" && d.status !== "crashed") {
+        timer = window.setTimeout(tick, 1500);
+      }
+    };
+    tick();
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [open, agent?.id, selectedId]);
+
+  if (!open) return null;
+
+  const selected = items.find((a) => a.id === selectedId) ?? null;
+  const live = selectedId ? serving[selectedId] ?? selected : null;
+  const iframeSrc =
+    live && (live.status === "ready" || live.alive)
+      ? `http://127.0.0.1:${live.port}/`
+      : null;
+
+  return (
+    <aside className="w-[58%] max-w-[960px] border-l border-border/60 bg-card flex flex-col h-screen">
+      <div className="flex items-center justify-between px-6 pt-7 pb-3">
+        <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+          <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
+          <span>Artifact</span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground"
+          title="Close artifact panel"
+        >
+          <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+        </button>
+      </div>
+
+      {items.length > 1 && (
+        <div className="px-6 pb-2 flex flex-wrap gap-1.5">
+          {items.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => setSelectedId(a.id)}
+              className={`text-[12px] px-2.5 py-1 rounded-full ring-1 transition ${
+                a.id === selectedId
+                  ? "bg-foreground text-background ring-foreground"
+                  : "ring-border/70 text-muted-foreground hover:text-foreground"
+              }`}
+              title={a.path}
+            >
+              {a.title || a.id}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 px-6 pb-6 pt-2">
+        <ArtifactFrame artifact={live} src={iframeSrc} />
+      </div>
+    </aside>
+  );
+}
+
+function ArtifactFrame({ artifact, src }: { artifact: Artifact | null; src: string | null }) {
+  if (!artifact) {
+    return (
+      <div className="h-full flex items-center justify-center text-sm italic text-muted-foreground rounded-2xl ring-1 ring-border/60 bg-background">
+        no artifact selected
+      </div>
+    );
+  }
+  if (!src) {
+    const label =
+      artifact.status === "installing"
+        ? "Installing dependencies…"
+        : artifact.status === "starting"
+          ? "Starting Vite…"
+          : artifact.status === "crashed"
+            ? `Crashed${artifact.error ? `: ${artifact.error}` : ""}`
+            : "Idle";
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground rounded-2xl ring-1 ring-border/60 bg-background">
+        {artifact.status === "installing" || artifact.status === "starting" ? (
+          <Loader2 className="w-5 h-5 animate-spin" strokeWidth={1.8} />
+        ) : null}
+        <span>{label}</span>
+        {artifact.error && <span className="text-xs px-6 text-center">{artifact.error}</span>}
+      </div>
+    );
+  }
+  return (
+    <iframe
+      title={`artifact:${artifact.id}`}
+      src={src}
+      className="w-full h-full rounded-2xl ring-1 ring-border/60 bg-background"
+      // Reserved channel for the future hover-annotation flow.
+      allow="cross-origin-isolated"
+    />
+  );
 }
