@@ -138,7 +138,7 @@ export function App() {
 
   return (
     <div className="h-screen flex bg-background text-foreground">
-      <div className="w-[380px] shrink-0">
+      <div className="w-[280px] shrink-0">
         <Sidebar
           agents={agents}
           selectedId={selectedId}
@@ -333,7 +333,7 @@ function AgentNode({
             {agent.id}
           </div>
           {showDescription && (
-            <div className="text-[11.5px] text-muted-foreground line-clamp-2 mt-0.5 leading-snug">
+            <div className="text-[11.5px] text-muted-foreground truncate mt-0.5 leading-snug">
               {agent.description}
             </div>
           )}
