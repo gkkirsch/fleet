@@ -1971,8 +1971,6 @@ function ArtifactPanel({
     };
   }, [open, agent?.id, selectedId]);
 
-  if (!open) return null;
-
   const selected = items.find((a) => a.id === selectedId) ?? null;
   const live = selectedId ? serving[selectedId] ?? selected : null;
   const iframeSrc =
@@ -1981,45 +1979,55 @@ function ArtifactPanel({
       : null;
 
   return (
-    <aside className="w-[58%] max-w-[960px] border-l border-border/60 bg-card flex flex-col h-screen">
-      <div className="flex items-center justify-between px-6 pt-7 pb-3">
-        <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-          <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
-          <span>Artifact</span>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-muted-foreground hover:text-foreground"
-          title="Close artifact panel"
-        >
-          <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
-        </button>
-      </div>
-
-      {items.length > 1 && (
-        <div className="px-6 pb-2 flex flex-wrap gap-1.5">
-          {items.map((a) => (
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-card h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[58%] max-w-[960px]" : "w-0 border-l-0"
+      )}
+    >
+      {open && (
+        <div className="h-full flex flex-col">
+          <div className="flex items-center justify-between px-6 pt-7 pb-3">
+            <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+              <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
+              <span>Artifact</span>
+            </div>
             <button
-              key={a.id}
               type="button"
-              onClick={() => setSelectedId(a.id)}
-              className={`text-[12px] px-2.5 py-1 rounded-full ring-1 transition ${
-                a.id === selectedId
-                  ? "bg-foreground text-background ring-foreground"
-                  : "ring-border/70 text-muted-foreground hover:text-foreground"
-              }`}
-              title={a.path}
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Close artifact panel"
             >
-              {a.title || a.id}
+              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
             </button>
-          ))}
+          </div>
+
+          {items.length > 1 && (
+            <div className="px-6 pb-2 flex flex-wrap gap-1.5">
+              {items.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => setSelectedId(a.id)}
+                  className={cn(
+                    "text-[12px] px-2.5 py-1 rounded-full ring-1 transition-colors",
+                    a.id === selectedId
+                      ? "bg-foreground text-background ring-foreground"
+                      : "ring-border/70 text-muted-foreground hover:text-foreground"
+                  )}
+                  title={a.path}
+                >
+                  {a.title || a.id}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="flex-1 min-h-0 px-6 pb-6 pt-2">
+            <ArtifactFrame artifact={live} src={iframeSrc} />
+          </div>
         </div>
       )}
-
-      <div className="flex-1 min-h-0 px-6 pb-6 pt-2">
-        <ArtifactFrame artifact={live} src={iframeSrc} />
-      </div>
     </aside>
   );
 }
