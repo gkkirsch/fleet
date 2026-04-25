@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -651,11 +651,13 @@ function Markdown({ children, tone }: { children: string; tone: "light" | "dark"
 type IconComponent = React.ComponentType<{ className?: string; strokeWidth?: number }>;
 
 const ICON_FOR_CHAR: Record<string, { Icon: IconComponent; tone: string }> = {
+  // Slim marks for the line-art glyphs
   "✓": { Icon: Check as IconComponent, tone: "text-[var(--matcha)]" },
-  "✅": { Icon: Check as IconComponent, tone: "text-[var(--matcha)]" },
   "✗": { Icon: XIcon as IconComponent, tone: "" },
   "✘": { Icon: XIcon as IconComponent, tone: "" },
-  "❌": { Icon: XIcon as IconComponent, tone: "" },
+  // Square-framed variants for the emoji forms (colored-square in source)
+  "✅": { Icon: SquareCheckBig as IconComponent, tone: "text-[var(--matcha)]" },
+  "❌": { Icon: SquareX as IconComponent, tone: "" },
   "⚠": { Icon: TriangleAlert as IconComponent, tone: "" },
   "⚠️": { Icon: TriangleAlert as IconComponent, tone: "" },
 };
