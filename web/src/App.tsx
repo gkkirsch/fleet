@@ -652,8 +652,10 @@ type IconComponent = React.ComponentType<{ className?: string; strokeWidth?: num
 
 const ICON_FOR_CHAR: Record<string, { Icon: IconComponent; tone: string }> = {
   "✓": { Icon: Check as IconComponent, tone: "text-[var(--matcha)]" },
+  "✅": { Icon: Check as IconComponent, tone: "text-[var(--matcha)]" },
   "✗": { Icon: XIcon as IconComponent, tone: "" },
   "✘": { Icon: XIcon as IconComponent, tone: "" },
+  "❌": { Icon: XIcon as IconComponent, tone: "" },
   "⚠": { Icon: TriangleAlert as IconComponent, tone: "" },
   "⚠️": { Icon: TriangleAlert as IconComponent, tone: "" },
 };
