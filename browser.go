@@ -72,15 +72,16 @@ func chromeAlive(port int) bool {
 // launchChrome spawns headed Chrome with the per-space profile and CDP
 // port. No-op (returns nil) if Chrome on that port is already alive.
 //
-// Anti-detection flags:
-//   - --disable-blink-features=AutomationControlled stops the obvious
-//     navigator.webdriver=true tell.
-//   - --disable-infobars hides the "Chrome is being controlled by
-//     automated test software" banner.
+// Flag-set rationale: we deliberately keep this minimal so Chrome
+// behaves like a normal user session. Skipping --enable-automation
+// means Chrome doesn't set navigator.webdriver, doesn't show the
+// "controlled by automated test software" infobar, and doesn't
+// trigger the "unsupported command-line flag" warning banner that
+// --disable-blink-features=AutomationControlled provokes.
 //
-// We do NOT mitigate the --remote-debugging-port signal itself; sites
-// behind Cloudflare bot-fight may still flag the session. Accepting
-// that for v1.
+// Caveat: --remote-debugging-port itself is a Cloudflare bot-fight
+// signal. No flag mitigates it; an extension-bridge would. Accepting
+// for v1.
 func launchChrome(orchID string) (port int, profile string, err error) {
 	port = cdpPortFor(orchID)
 	profile = browserProfileDir(orchID)
@@ -102,8 +103,6 @@ func launchChrome(orchID string) (port int, profile string, err error) {
 		"--remote-debugging-port=" + strconv.Itoa(port),
 		"--no-first-run",
 		"--no-default-browser-check",
-		"--disable-blink-features=AutomationControlled",
-		"--disable-infobars",
 		"--window-size=1280,800",
 		"about:blank",
 	}
