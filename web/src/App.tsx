@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MousePointerClick, Package, Paperclip, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -24,6 +24,24 @@ function useThreadPanel() {
     set,
     toggle: useCallback(() => set(!open), [open, set]),
     close: useCallback(() => set(false), [set]),
+  };
+}
+
+const SIDEBAR_STORAGE_KEY = "fleetview.sidebar.open";
+
+function useFleetSidebar() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    return v === null ? true : v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(SIDEBAR_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
   };
 }
 
@@ -52,6 +70,7 @@ export function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const panel = useThreadPanel();
   const artifactPanel = useArtifactPanel();
+  const sidebar = useFleetSidebar();
   // Mutually-exclusive panels — opening one auto-closes the other.
   const toggleSettings = useCallback(() => {
     if (!panel.open) artifactPanel.close();
@@ -138,7 +157,12 @@ export function App() {
 
   return (
     <div className="h-screen flex bg-background text-foreground">
-      <div className="w-[280px] shrink-0">
+      <div
+        className={cn(
+          "shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out",
+          sidebar.open ? "w-[280px]" : "w-0"
+        )}
+      >
         <Sidebar
           agents={agents}
           selectedId={selectedId}
@@ -155,6 +179,8 @@ export function App() {
           onTogglePanel={toggleSettings}
           artifactPanelOpen={artifactPanel.open}
           onToggleArtifactPanel={toggleArtifact}
+          sidebarOpen={sidebar.open}
+          onToggleSidebar={sidebar.toggle}
         />
       </div>
       <ThreadPanel
@@ -382,6 +408,8 @@ function Detail({
   onTogglePanel,
   artifactPanelOpen,
   onToggleArtifactPanel,
+  sidebarOpen,
+  onToggleSidebar,
 }: {
   agent: Agent | null;
   messages: Message[];
@@ -391,12 +419,25 @@ function Detail({
   onTogglePanel: () => void;
   artifactPanelOpen: boolean;
   onToggleArtifactPanel: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
 }) {
   if (!agent) {
     return (
-      <div className="flex items-center justify-center text-muted-foreground text-sm italic h-full">
-        select one
-      </div>
+      <section className="flex flex-col h-full min-h-0">
+        <TopNav
+          agent={null}
+          panelOpen={panelOpen}
+          onTogglePanel={onTogglePanel}
+          artifactPanelOpen={artifactPanelOpen}
+          onToggleArtifactPanel={onToggleArtifactPanel}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={onToggleSidebar}
+        />
+        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm italic">
+          select one
+        </div>
+      </section>
     );
   }
   return (
@@ -407,6 +448,8 @@ function Detail({
         onTogglePanel={onTogglePanel}
         artifactPanelOpen={artifactPanelOpen}
         onToggleArtifactPanel={onToggleArtifactPanel}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={onToggleSidebar}
       />
       <MessageStream agent={agent} messages={messages} isPending={isPending} />
       <NotifyBox agentId={agent.id} onSent={onSent} />
@@ -420,18 +463,33 @@ function TopNav({
   onTogglePanel,
   artifactPanelOpen,
   onToggleArtifactPanel,
+  sidebarOpen,
+  onToggleSidebar,
 }: {
-  agent: Agent;
+  agent: Agent | null;
   panelOpen: boolean;
   onTogglePanel: () => void;
   artifactPanelOpen: boolean;
   onToggleArtifactPanel: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
 }) {
-  const Icon = panelOpen ? PanelRightClose : PanelRight;
+  const SettingsIcon = panelOpen ? PanelRightClose : PanelRight;
+  const SidebarIcon = sidebarOpen ? PanelLeftClose : PanelLeft;
   return (
-    <div className="flex items-center justify-end gap-5 px-10 pt-8 pb-2">
-      <BrowserButton agent={agent} />
-      <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />
+    <div className="flex items-center justify-between gap-5 px-10 pt-8 pb-2">
+      <button
+        type="button"
+        onClick={onToggleSidebar}
+        title={sidebarOpen ? "Collapse fleet" : "Expand fleet"}
+        className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+      >
+        <SidebarIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
+        <span>Fleet</span>
+      </button>
+      <div className="flex items-center justify-end gap-5">
+      {agent && <BrowserButton agent={agent} />}
+      {agent && <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />}
       <button
         type="button"
         onClick={onTogglePanel}
@@ -439,8 +497,9 @@ function TopNav({
         className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
       >
         <span>Settings</span>
-        <Icon className="w-3.5 h-3.5" strokeWidth={1.8} />
+        <SettingsIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
       </button>
+      </div>
     </div>
   );
 }
