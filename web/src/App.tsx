@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MousePointerClick, Package, Paperclip, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -1908,6 +1908,14 @@ function ArtifactNavButton({
   );
 }
 
+type Annotation = {
+  text: string;
+  source?: { fileName: string; lineNumber: number; columnNumber?: number };
+  label?: string;
+  html?: string;
+  url?: string;
+};
+
 function ArtifactPanel({
   agent,
   open,
@@ -1920,6 +1928,10 @@ function ArtifactPanel({
   const [items, setItems] = useState<Artifact[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [serving, setServing] = useState<Record<string, Artifact>>({});
+  const [designOn, setDesignOn] = useState(false);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [sending, setSending] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   // Load list when opened or agent changes.
   const refresh = useCallback(() => {
@@ -1971,6 +1983,85 @@ function ArtifactPanel({
     };
   }, [open, agent?.id, selectedId]);
 
+  // ── design mode + annotations ───────────────────────────────
+
+  // Stable ref so the message handler reads the freshest queue
+  // without re-binding the listener on every annotation change.
+  const annotationsRef = useRef<Annotation[]>([]);
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
+
+  // Push design-mode toggle into the iframe whenever it changes,
+  // and re-push when src/serving updates so a freshly-loaded iframe
+  // catches up to the current toggle state.
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: "fv:design", on: designOn },
+      "*",
+    );
+  }, [designOn, selectedId, serving]);
+
+  // Reset annotation queue + design mode when switching artifact / agent.
+  useEffect(() => {
+    setAnnotations([]);
+    setDesignOn(false);
+  }, [agent?.id, selectedId]);
+
+  const sendAll = useCallback(
+    async (queue?: Annotation[]) => {
+      const list = queue ?? annotationsRef.current;
+      if (!agent || list.length === 0) return;
+      const aid = selectedId ?? "(unknown)";
+      const lines = list.map((a, i) => {
+        const loc = a.source
+          ? `${a.source.fileName.replace(/^.*\/artifacts\/[^/]+\//, "")}:${a.source.lineNumber}`
+          : "(no source)";
+        return `${i + 1}. ${loc} · ${a.label ?? ""}\n   → ${a.text}`;
+      });
+      const message = `[UI feedback — artifact ${aid}]\n\n${lines.join("\n\n")}`;
+      setSending(true);
+      try {
+        await fetch(`/api/agents/${agent.id}/notify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, from: "ui" }),
+        });
+        setAnnotations([]);
+      } finally {
+        setSending(false);
+      }
+    },
+    [agent, selectedId],
+  );
+
+  // Listen for annotations posted from the iframe.
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      const msg = e.data;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "fv:annotation" && msg.payload) {
+        setAnnotations((arr) => {
+          const next = [...arr, msg.payload as Annotation];
+          if (msg.sendNow) {
+            // Defer one tick so React commits the new state first.
+            window.setTimeout(() => sendAll(next), 0);
+          }
+          return next;
+        });
+      }
+      if (msg.type === "fv:design-cancel") {
+        setDesignOn(false);
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [sendAll]);
+
+  const removeAnnotation = useCallback((idx: number) => {
+    setAnnotations((arr) => arr.filter((_, i) => i !== idx));
+  }, []);
+
   const selected = items.find((a) => a.id === selectedId) ?? null;
   const live = selectedId ? serving[selectedId] ?? selected : null;
   const iframeSrc =
@@ -1992,14 +2083,30 @@ function ArtifactPanel({
               <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
               <span>Artifact</span>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              title="Close artifact panel"
-            >
-              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setDesignOn((v) => !v)}
+                title={designOn ? "Exit design mode" : "Enter design mode (hover to highlight, click to comment)"}
+                className={cn(
+                  "flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-2.5 py-1 rounded-full ring-1 transition-colors",
+                  designOn
+                    ? "bg-[var(--matcha)] text-background ring-[var(--matcha)]"
+                    : "text-muted-foreground ring-border/70 hover:text-foreground"
+                )}
+              >
+                <Pencil className="w-3 h-3" strokeWidth={1.8} />
+                <span>Design</span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title="Close artifact panel"
+              >
+                <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+              </button>
+            </div>
           </div>
 
           {items.length > 1 && (
@@ -2023,16 +2130,112 @@ function ArtifactPanel({
             </div>
           )}
 
-          <div className="flex-1 min-h-0 px-6 pb-6 pt-2">
-            <ArtifactFrame artifact={live} src={iframeSrc} />
+          <div className="flex-1 min-h-0 px-6 pt-2 pb-2">
+            <ArtifactFrame artifact={live} src={iframeSrc} iframeRef={iframeRef} />
           </div>
+
+          {annotations.length > 0 && (
+            <AnnotationTray
+              annotations={annotations}
+              sending={sending}
+              onRemove={removeAnnotation}
+              onSend={() => sendAll()}
+              onClear={() => setAnnotations([])}
+            />
+          )}
         </div>
       )}
     </aside>
   );
 }
 
-function ArtifactFrame({ artifact, src }: { artifact: Artifact | null; src: string | null }) {
+function AnnotationTray({
+  annotations,
+  sending,
+  onRemove,
+  onSend,
+  onClear,
+}: {
+  annotations: Annotation[];
+  sending: boolean;
+  onRemove: (idx: number) => void;
+  onSend: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="px-6 pb-6 pt-1">
+      <div className="rounded-2xl ring-1 ring-border/60 bg-background overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border/50">
+          <MousePointerClick className="w-3.5 h-3.5 text-[var(--matcha)]" strokeWidth={1.8} />
+          <span className="text-[12px] font-medium text-foreground">
+            {annotations.length} {annotations.length === 1 ? "comment" : "comments"}
+          </span>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            disabled={sending}
+            onClick={onSend}
+            className="flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-1.5 rounded-full bg-foreground text-background hover:bg-foreground/85 transition-colors disabled:opacity-50"
+          >
+            {sending ? (
+              <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+            ) : (
+              <Send className="w-3 h-3" strokeWidth={1.8} />
+            )}
+            <span>Send all</span>
+          </button>
+        </div>
+        <ul className="max-h-40 overflow-y-auto scrollbar-calm">
+          {annotations.map((a, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-3 px-4 py-2 hover:bg-secondary/40 group"
+            >
+              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground pt-0.5">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[12px] text-foreground truncate">{a.text}</div>
+                {a.label && (
+                  <div className="text-[11px] text-muted-foreground truncate">
+                    {a.source
+                      ? `${a.source.fileName.replace(/^.*\/artifacts\/[^/]+\//, "")}:${a.source.lineNumber} · ${a.label}`
+                      : a.label}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                title="Remove"
+                className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+              >
+                <XIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function ArtifactFrame({
+  artifact,
+  src,
+  iframeRef,
+}: {
+  artifact: Artifact | null;
+  src: string | null;
+  iframeRef?: React.Ref<HTMLIFrameElement>;
+}) {
   if (!artifact) {
     return (
       <div className="h-full flex items-center justify-center text-sm italic text-muted-foreground rounded-2xl ring-1 ring-border/60 bg-background">
@@ -2061,10 +2264,10 @@ function ArtifactFrame({ artifact, src }: { artifact: Artifact | null; src: stri
   }
   return (
     <iframe
+      ref={iframeRef}
       title={`artifact:${artifact.id}`}
       src={src}
       className="w-full h-full rounded-2xl ring-1 ring-border/60 bg-background"
-      // Reserved channel for the future hover-annotation flow.
       allow="cross-origin-isolated"
     />
   );

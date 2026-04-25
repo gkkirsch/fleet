@@ -13,6 +13,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,6 +28,9 @@ import (
 	"strings"
 	"time"
 )
+
+//go:embed static/inspector.js
+var inspectorJS []byte
 
 var (
 	rosterBin = "roster"
@@ -454,6 +458,16 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func router() http.Handler {
 	mux := http.NewServeMux()
+
+	// Served to artifact iframes via a <script> tag baked into the
+	// template. The script is dormant until the parent toggles design
+	// mode via postMessage. Same-origin would be cleaner; CORS is on
+	// for the dashboard so this works across the Vite/fleetview ports.
+	mux.HandleFunc("/__inspector.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(inspectorJS)
+	})
 
 	mux.HandleFunc("/api/fleet", handleFleet)
 	mux.HandleFunc("/api/agents/", func(w http.ResponseWriter, r *http.Request) {
