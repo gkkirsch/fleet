@@ -624,8 +624,8 @@ function Markdown({ children, tone }: { children: string; tone: "light" | "dark"
         li: ({ children }) => <li className="pl-0.5">{withIcons(children)}</li>,
         h1: ({ children }) => <h3 className="font-[family-name:var(--font-heading)] text-[1.18em] tracking-tight mt-3 mb-1 first:mt-0">{withIcons(children)}</h3>,
         h2: ({ children }) => <h3 className="font-[family-name:var(--font-heading)] text-[1.12em] tracking-tight mt-3 mb-1 first:mt-0">{withIcons(children)}</h3>,
-        h3: ({ children }) => <h3 className="font-[family-name:var(--font-heading)] text-[1.06em] tracking-tight mt-2 mb-1 first:mt-0">{withIcons(children)}</h3>,
-        h4: ({ children }) => <h4 className="font-[family-name:var(--font-heading)] text-[1.02em] tracking-tight mt-2 mb-1 first:mt-0">{withIcons(children)}</h4>,
+        h3: ({ children }) => <h3 className="text-[1.0em] font-semibold mt-2 mb-1 first:mt-0">{withIcons(children)}</h3>,
+        h4: ({ children }) => <h4 className="text-[0.97em] font-semibold mt-2 mb-1 first:mt-0">{withIcons(children)}</h4>,
         blockquote: ({ children }) => (
           <blockquote className={`my-2 pl-3 ${styles.quoteBorder} italic opacity-90`}>{withIcons(children)}</blockquote>
         ),
