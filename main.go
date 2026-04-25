@@ -453,6 +453,10 @@ func router() http.Handler {
 		case "browser":
 			handleBrowser(w, r, id)
 		default:
+			if strings.HasPrefix(sub, "artifacts") {
+				handleArtifacts(w, r, id, strings.TrimPrefix(sub, "artifacts"))
+				return
+			}
 			http.Error(w, "unknown subresource", http.StatusNotFound)
 		}
 	})
