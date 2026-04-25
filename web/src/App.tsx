@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, KeyRound, Layers, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Package, Paperclip, PanelRight, PanelRightClose, Plus, Send, Sparkles, Store, TerminalSquare, Users, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
 import type { Agent, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
@@ -344,7 +344,7 @@ function Detail({
   }
   return (
     <section className="flex flex-col h-full min-h-0">
-      <TopNav panelOpen={panelOpen} onTogglePanel={onTogglePanel} />
+      <TopNav agent={agent} panelOpen={panelOpen} onTogglePanel={onTogglePanel} />
       <MessageStream agent={agent} messages={messages} isPending={isPending} />
       <NotifyBox agentId={agent.id} onSent={onSent} />
     </section>
@@ -352,15 +352,18 @@ function Detail({
 }
 
 function TopNav({
+  agent,
   panelOpen,
   onTogglePanel,
 }: {
+  agent: Agent;
   panelOpen: boolean;
   onTogglePanel: () => void;
 }) {
   const Icon = panelOpen ? PanelRightClose : PanelRight;
   return (
-    <div className="flex items-center justify-end px-10 pt-8 pb-2">
+    <div className="flex items-center justify-end gap-5 px-10 pt-8 pb-2">
+      <BrowserButton agent={agent} />
       <button
         type="button"
         onClick={onTogglePanel}
@@ -371,6 +374,85 @@ function TopNav({
         <Icon className="w-3.5 h-3.5" strokeWidth={1.8} />
       </button>
     </div>
+  );
+}
+
+type BrowserState = {
+  port?: number;
+  profile?: string;
+  alive: boolean;
+  error?: string;
+  loading: boolean;
+};
+
+function BrowserButton({ agent }: { agent: Agent }) {
+  const [state, setState] = useState<BrowserState>({ alive: false, loading: false });
+  const eligible = agent.kind === "orchestrator" || agent.kind === "worker";
+
+  useEffect(() => {
+    if (!eligible) return;
+    let cancelled = false;
+    fetch(`/api/agents/${agent.id}/browser`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        setState((s) => ({ ...s, port: d.port, profile: d.profile, alive: !!d.alive }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, eligible]);
+
+  if (!eligible) return null;
+
+  const onClick = async () => {
+    setState((s) => ({ ...s, loading: true, error: undefined }));
+    try {
+      const r = await fetch(`/api/agents/${agent.id}/browser`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setState((s) => ({ ...s, loading: false, error: d.error || `HTTP ${r.status}` }));
+        return;
+      }
+      setState({
+        port: d.port,
+        profile: d.profile,
+        alive: !!d.alive,
+        loading: false,
+        error: d.error,
+      });
+    } catch (e: any) {
+      setState((s) => ({ ...s, loading: false, error: String(e?.message || e) }));
+    }
+  };
+
+  const title = state.error
+    ? `Browser launch failed: ${state.error}`
+    : state.alive
+      ? `Chrome live on :${state.port}\nProfile: ${state.profile}`
+      : state.port
+        ? `Launch space Chrome (port ${state.port})`
+        : "Launch space Chrome";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      disabled={state.loading}
+      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors disabled:opacity-60"
+    >
+      <span>Browser</span>
+      {state.loading ? (
+        <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.8} />
+      ) : (
+        <Globe
+          className={`w-3.5 h-3.5 ${state.alive ? "text-[var(--matcha)]" : ""}`}
+          strokeWidth={1.8}
+        />
+      )}
+    </button>
   );
 }
 

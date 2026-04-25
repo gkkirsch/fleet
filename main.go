@@ -450,6 +450,8 @@ func router() http.Handler {
 			handleInstallPlugin(w, r, id)
 		case "credentials":
 			handleCredentials(w, r, id)
+		case "browser":
+			handleBrowser(w, r, id)
 		default:
 			http.Error(w, "unknown subresource", http.StatusNotFound)
 		}
