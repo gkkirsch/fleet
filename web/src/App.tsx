@@ -508,7 +508,7 @@ function MessageStream({
         ) : (
           <div className="space-y-4">
             {filtered.map((m, i) => (
-              <MessageRow key={i} m={m} agent={agent} />
+              <MessageRow key={i} m={m} />
             ))}
             {isStreaming && <ThinkingRow agent={agent} />}
           </div>
@@ -550,7 +550,7 @@ function titleFor(a: Agent): string {
   return a.id;
 }
 
-function MessageRow({ m, agent }: { m: Message; agent: Agent }) {
+function MessageRow({ m }: { m: Message }) {
   // Two sides: user on the right (our side), assistant/agent on the left.
   // Tool blocks render centered, inline, in a muted style.
   if (m.role === "user") {
@@ -564,11 +564,8 @@ function MessageRow({ m, agent }: { m: Message; agent: Agent }) {
   }
   if (m.role === "assistant") {
     return (
-      <div className="flex items-start gap-3">
-        <KindTile kind={agent.kind} size={34} />
-        <div className="max-w-[78%] py-1 text-foreground text-[15px] leading-relaxed break-words">
-          <Markdown tone="light">{m.text || ""}</Markdown>
-        </div>
+      <div className="max-w-[78%] py-1 text-foreground text-[15px] leading-relaxed break-words">
+        <Markdown tone="light">{m.text || ""}</Markdown>
       </div>
     );
   }
