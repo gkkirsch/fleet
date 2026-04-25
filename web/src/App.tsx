@@ -2079,34 +2079,15 @@ function ArtifactPanel({
       {open && (
         <div className="h-full flex flex-col">
           <div className="flex items-center justify-between px-6 pt-7 pb-3">
-            <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-              <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
-              <span>Artifact</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setDesignOn((v) => !v)}
-                title={designOn ? "Exit design mode" : "Enter design mode (hover to highlight, click to comment)"}
-                className={cn(
-                  "flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-2.5 py-1 rounded-full ring-1 transition-colors",
-                  designOn
-                    ? "bg-[var(--matcha)] text-background ring-[var(--matcha)]"
-                    : "text-muted-foreground ring-border/70 hover:text-foreground"
-                )}
-              >
-                <Pencil className="w-3 h-3" strokeWidth={1.8} />
-                <span>Design</span>
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                title="Close artifact panel"
-              >
-                <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
-              </button>
-            </div>
+            <DesignSwitch on={designOn} onToggle={() => setDesignOn((v) => !v)} />
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Close artifact panel"
+            >
+              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+            </button>
           </div>
 
           {items.length > 1 && (
@@ -2146,6 +2127,57 @@ function ArtifactPanel({
         </div>
       )}
     </aside>
+  );
+}
+
+function DesignSwitch({
+  on,
+  onToggle,
+}: {
+  on: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onToggle}
+      title={on ? "Exit design mode" : "Enter design mode — hover to highlight, click to comment"}
+      className="group flex items-center gap-2.5"
+    >
+      <Pencil
+        className={cn(
+          "w-3.5 h-3.5 transition-colors",
+          on ? "text-[var(--matcha)]" : "text-muted-foreground group-hover:text-foreground"
+        )}
+        strokeWidth={1.8}
+      />
+      <span
+        className={cn(
+          "text-[11px] font-medium tracking-[0.22em] uppercase transition-colors",
+          on ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+        )}
+      >
+        Design
+      </span>
+      <span
+        className={cn(
+          "relative inline-block h-[18px] w-8 rounded-full transition-colors ring-1",
+          on
+            ? "bg-[var(--matcha)] ring-[var(--matcha)]"
+            : "bg-secondary ring-border/70 group-hover:ring-border"
+        )}
+        aria-hidden="true"
+      >
+        <span
+          className={cn(
+            "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-background shadow-sm transition-[left] duration-150 ease-out",
+            on ? "left-[16px]" : "left-[2px]"
+          )}
+        />
+      </span>
+    </button>
   );
 }
 
