@@ -2143,7 +2143,7 @@ function DesignSwitch({
       role="switch"
       aria-checked={on}
       onClick={onToggle}
-      title={on ? "Exit design mode" : "Enter design mode — hover to highlight, click to comment"}
+      title={on ? "Exit edit-design mode" : "Edit design — hover to highlight, click to comment"}
       className="group flex items-center gap-2.5"
     >
       <Pencil
@@ -2159,7 +2159,7 @@ function DesignSwitch({
           on ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
         )}
       >
-        Design
+        Edit Design
       </span>
       <span
         className={cn(
