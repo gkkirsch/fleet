@@ -741,10 +741,10 @@ function MessageRow({ m }: { m: Message }) {
             {paths.map((p, i) => (
               <span
                 key={i}
-                className="inline-flex items-center gap-1.5 max-w-[260px] text-[12px] px-2 py-1 rounded-full bg-card text-foreground ring-1 ring-border/70"
+                className="inline-flex items-center gap-1.5 max-w-[260px] text-[12px] text-muted-foreground"
                 title={p}
               >
-                <Paperclip className="w-3 h-3 shrink-0 text-muted-foreground" strokeWidth={1.8} />
+                <Paperclip className="w-3 h-3 shrink-0" strokeWidth={1.8} />
                 <span className="truncate">{attachmentDisplayName(p)}</span>
               </span>
             ))}
