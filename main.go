@@ -508,6 +508,12 @@ func router() http.Handler {
 			handleCredentials(w, r, id)
 		case "browser":
 			handleBrowser(w, r, id)
+		case "upload":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			handleUpload(w, r, id)
 		default:
 			if strings.HasPrefix(sub, "artifacts") {
 				handleArtifacts(w, r, id, strings.TrimPrefix(sub, "artifacts"))

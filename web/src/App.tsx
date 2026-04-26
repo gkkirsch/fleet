@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MessageCircle, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -211,7 +211,7 @@ function KindTile({
     dispatcher: {
       bg: "bg-[color:var(--clay-soft)]",
       fg: "text-[color:var(--clay)]",
-      Icon: Workflow,
+      Icon: MessageCircle,
     },
     orchestrator: {
       bg: "bg-[color:var(--matcha-soft)]",
@@ -276,43 +276,44 @@ function Sidebar({
   const tree = useMemo(() => buildTree(agents ?? []), [agents]);
 
   if (collapsed) {
-    // Rail mode: just the kind tiles, clickable, vertically
-    // arranged. Width matches the wrapper's w-[56px]; hover tooltip
-    // surfaces the agent id.
+    // Rail mode: tiny serif "b" anchor up top (so the brand doesn't
+    // disappear with the nav) + clickable kind tiles stacked below.
     const ordered = flattenTree(tree);
     return (
-      <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center pt-[80px] pb-6 gap-1.5 overflow-hidden">
-        {ordered.map((a) => (
-          <button
-            key={a.id}
-            type="button"
-            onClick={() => onSelect(a.id)}
-            title={a.id}
-            className={cn(
-              "rounded-lg p-1.5 transition-colors",
-              a.id === selectedId
-                ? "bg-card shadow-sm ring-1 ring-border/70"
-                : "hover:bg-sidebar-accent/60"
-            )}
-          >
-            <KindTile kind={a.kind} size={24} />
-          </button>
-        ))}
+      <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center overflow-hidden">
+        <div className="pt-10 pb-5">
+          <span className="font-[family-name:var(--font-heading)] text-[28px] leading-none tracking-tight text-foreground lowercase">
+            b
+          </span>
+        </div>
+        <div className="flex flex-col items-center gap-1.5 pb-6">
+          {ordered.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => onSelect(a.id)}
+              title={a.id}
+              className={cn(
+                "rounded-lg p-1.5 transition-colors",
+                a.id === selectedId
+                  ? "bg-card shadow-sm ring-1 ring-border/70"
+                  : "hover:bg-sidebar-accent/60"
+              )}
+            >
+              <KindTile kind={a.kind} size={24} />
+            </button>
+          ))}
+        </div>
       </aside>
     );
   }
 
   return (
     <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px]">
-      <div className="px-8 pt-10 pb-6 flex items-baseline justify-between">
+      <div className="px-8 pt-10 pb-6">
         <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
-          Rooster
+          beepboop
         </h1>
-        {agents !== null && (
-          <span className="text-xs tabular-nums text-muted-foreground font-mono">
-            {agents.length}
-          </span>
-        )}
       </div>
       <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pb-8 space-y-2">
         {agents === null && (
@@ -400,7 +401,7 @@ function AgentNode({
         <KindTile kind={agent.kind} size={26} />
         <div className="min-w-0 flex-1">
           <div className="font-mono text-[12.5px] font-medium tracking-tight text-foreground truncate">
-            {agent.id}
+            {displayName(agent)}
           </div>
           {showDescription && (
             <div className="text-[11.5px] text-muted-foreground truncate mt-0.5 leading-snug">
@@ -711,9 +712,18 @@ function ThinkingRow({ agent }: { agent: Agent }) {
 
 function titleFor(a: Agent): string {
   // Use the description as the display title when it's a single short sentence;
-  // otherwise fall back to the id so the serif headline reads cleanly.
+  // otherwise fall back to the friendly display name so the serif headline reads cleanly.
   const d = (a.description || "").trim();
   if (d && d.length <= 48 && !/\n/.test(d)) return d;
+  return displayName(a);
+}
+
+// displayName aliases the underlying agent id for UI surfaces. The
+// dispatcher's role is conversational (route requests, route replies),
+// so it reads more naturally as "chat" than "dispatch" in the
+// sidebar / page title — even though the on-disk id stays "dispatch".
+function displayName(a: Agent): string {
+  if (a.kind === "dispatcher") return "chat";
   return a.id;
 }
 
@@ -917,6 +927,13 @@ function cleanUserText(text?: string): string {
 
 // ─── notify ──────────────────────────────────────────────────────
 
+type Attachment = {
+  path: string;
+  filename: string;
+  size: number;
+  media_type?: string;
+};
+
 function NotifyBox({
   agentId,
   onSent,
@@ -926,56 +943,173 @@ function NotifyBox({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const upload = useCallback(
+    async (files: FileList | File[]) => {
+      const arr = Array.from(files);
+      if (arr.length === 0) return;
+      setUploading((n) => n + arr.length);
+      await Promise.all(
+        arr.map(async (f) => {
+          const fd = new FormData();
+          fd.append("file", f);
+          try {
+            const r = await fetch(`/api/agents/${agentId}/upload`, {
+              method: "POST",
+              body: fd,
+            });
+            if (r.ok) {
+              const a: Attachment = await r.json();
+              setAttachments((cur) => [...cur, a]);
+            }
+          } finally {
+            setUploading((n) => n - 1);
+          }
+        }),
+      );
+    },
+    [agentId],
+  );
+
+  const removeAttachment = useCallback((idx: number) => {
+    setAttachments((arr) => arr.filter((_, i) => i !== idx));
+  }, []);
 
   const send = useCallback(async () => {
-    if (!text.trim()) return;
+    const body = text.trim();
+    if (!body && attachments.length === 0) return;
+    const message =
+      attachments.length === 0
+        ? body
+        : `${body}${body ? "\n\n" : ""}attached:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`;
     setSending(true);
-    // Optimistically kick off the shimmer the instant the user sends,
-    // BEFORE the network round-trip. The App-level effect will clear
-    // the flag once the backend reports streaming (or after 60s).
     onSent(agentId);
     try {
       const r = await fetch(`/api/agents/${agentId}/notify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, from: "ui" }),
+        body: JSON.stringify({ message, from: "ui" }),
       });
-      if (r.ok) setText("");
+      if (r.ok) {
+        setText("");
+        setAttachments([]);
+      }
     } finally {
       setSending(false);
     }
-  }, [agentId, text, onSent]);
+  }, [agentId, text, attachments, onSent]);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      if (e.dataTransfer?.files?.length) upload(e.dataTransfer.files);
+    },
+    [upload],
+  );
+
+  const hasAttachments = attachments.length > 0;
+  const hasText = text.trim().length > 0;
+  const canSend = (hasText || hasAttachments) && !sending && uploading === 0;
 
   return (
     <div className="px-10 pb-8 pt-4">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-2 rounded-2xl bg-card ring-1 ring-border/70 shadow-sm pr-2">
-          <textarea
-            className="flex-1 resize-none bg-transparent outline-none px-5 py-3.5 text-[15px] leading-relaxed min-h-[56px] placeholder:text-muted-foreground/70"
-            placeholder="Write here"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          className={cn(
+            "relative rounded-2xl bg-card ring-1 shadow-sm transition-colors",
+            dragOver ? "ring-[var(--matcha)] bg-[color-mix(in_oklch,var(--matcha)_8%,var(--card))]" : "ring-border/70"
+          )}
+        >
+          {hasAttachments && (
+            <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+              {attachments.map((a, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1.5 max-w-[260px] text-[12px] px-2 py-1 rounded-full bg-secondary text-foreground"
+                  title={a.path}
+                >
+                  <Paperclip className="w-3 h-3 shrink-0" strokeWidth={1.8} />
+                  <span className="truncate">{a.filename}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(i)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label={`Remove ${a.filename}`}
+                  >
+                    <XIcon className="w-3 h-3" strokeWidth={1.8} />
+                  </button>
+                </span>
+              ))}
+              {uploading > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-[12px] px-2 py-1 rounded-full bg-secondary text-muted-foreground">
+                  <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+                  uploading {uploading}…
+                </span>
+              )}
+            </div>
+          )}
+          <div className="flex items-center gap-2 pr-2">
+            <textarea
+              className="flex-1 resize-none bg-transparent outline-none px-5 py-3.5 text-[15px] leading-relaxed min-h-[56px] placeholder:text-muted-foreground/70"
+              placeholder={dragOver ? "Drop files to attach" : "Write here"}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+              }}
+              onPaste={(e) => {
+                if (e.clipboardData?.files?.length) {
+                  e.preventDefault();
+                  upload(e.clipboardData.files);
+                }
+              }}
+              disabled={sending}
+              rows={1}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending}
+              title="Attach files"
+              className="flex items-center justify-center h-10 w-10 rounded-xl text-muted-foreground hover:text-foreground hover:bg-background transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Paperclip size={16} strokeWidth={1.8} />
+            </button>
+            <button
+              type="button"
+              onClick={send}
+              disabled={!canSend}
+              title="send"
+              className="flex items-center justify-center h-10 w-10 rounded-xl bg-background ring-1 ring-border/70 hover:ring-border transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {sending || uploading > 0 ? (
+                <Loader2 className="text-muted-foreground animate-spin" size={16} strokeWidth={1.8} />
+              ) : (
+                <Send className="text-foreground" size={16} strokeWidth={1.8} />
+              )}
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) upload(e.target.files);
+              e.target.value = "";
             }}
-            disabled={sending}
-            rows={1}
           />
-          <button
-            type="button"
-            onClick={send}
-            disabled={sending || !text.trim()}
-            title="send"
-            className="flex items-center justify-center h-10 w-10 rounded-xl bg-background ring-1 ring-border/70 hover:ring-border transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {sending ? (
-              <span className="text-muted-foreground">…</span>
-            ) : text.trim() ? (
-              <Send className="text-foreground" size={16} strokeWidth={1.8} />
-            ) : (
-              <Paperclip className="text-muted-foreground" size={16} strokeWidth={1.8} />
-            )}
-          </button>
         </div>
       </div>
     </div>
