@@ -13,6 +13,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,6 +28,9 @@ import (
 	"strings"
 	"time"
 )
+
+//go:embed static/inspector.js
+var inspectorJS []byte
 
 var (
 	rosterBin = "roster"
@@ -138,22 +142,64 @@ func camuxStatus(target string) string {
 	return s
 }
 
-// findJSONLPath walks ~/.claude/projects/*/<uuid>.jsonl and returns the
-// first match. The filename IS the session UUID, so a glob is enough.
+// findJSONLPath returns the path of the JSONL file for a given Claude
+// session uuid. Search order:
+//
+//  1. Per-orch isolated dirs: <roster_data>/claude/*/projects/*/<uuid>.jsonl
+//     (where roster's prepareClaudeIsolation set CLAUDE_CONFIG_DIR for
+//     orchs spawned with isolation)
+//  2. The user's global ~/.claude/projects/*/<uuid>.jsonl (dispatchers
+//     and pre-isolation orchs).
+//
+// The filename IS the session UUID, so a glob is enough.
 func findJSONLPath(uuid string) string {
 	if uuid == "" {
 		return ""
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+	for _, base := range claudeProjectRoots() {
+		pattern := filepath.Join(base, "*", uuid+".jsonl")
+		if matches, _ := filepath.Glob(pattern); len(matches) > 0 {
+			return matches[0]
+		}
 	}
-	pattern := filepath.Join(home, ".claude", "projects", "*", uuid+".jsonl")
-	matches, err := filepath.Glob(pattern)
-	if err != nil || len(matches) == 0 {
-		return ""
+	return ""
+}
+
+// claudeProjectRoots returns every <something>/projects directory we
+// might find a session JSONL under.
+func claudeProjectRoots() []string {
+	var roots []string
+	// Per-orch isolated dirs first (more specific).
+	if rosterClaude := rosterClaudeRoot(); rosterClaude != "" {
+		entries, _ := os.ReadDir(rosterClaude)
+		for _, e := range entries {
+			if e.IsDir() {
+				roots = append(roots, filepath.Join(rosterClaude, e.Name(), "projects"))
+			}
+		}
 	}
-	return matches[0]
+	// User global last.
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, ".claude", "projects"))
+	}
+	return roots
+}
+
+// rosterClaudeRoot returns <roster_data>/claude (the parent of every
+// per-orch isolated dir). Mirrors roster's resolution.
+func rosterClaudeRoot() string {
+	if d := os.Getenv("ROSTER_DIR"); d != "" {
+		return filepath.Join(filepath.Dir(d), "claude")
+	}
+	base := os.Getenv("XDG_DATA_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(base, "roster", "claude")
 }
 
 // --- message parsing -------------------------------------------------------
@@ -413,6 +459,16 @@ func writeJSON(w http.ResponseWriter, v any) {
 func router() http.Handler {
 	mux := http.NewServeMux()
 
+	// Served to artifact iframes via a <script> tag baked into the
+	// template. The script is dormant until the parent toggles design
+	// mode via postMessage. Same-origin would be cleaner; CORS is on
+	// for the dashboard so this works across the Vite/fleetview ports.
+	mux.HandleFunc("/__inspector.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(inspectorJS)
+	})
+
 	mux.HandleFunc("/api/fleet", handleFleet)
 	mux.HandleFunc("/api/agents/", func(w http.ResponseWriter, r *http.Request) {
 		// /api/agents/<id>/messages  or  /api/agents/<id>/notify
@@ -436,7 +492,37 @@ func router() http.Handler {
 				return
 			}
 			handleNotify(w, r, id)
+		case "claude":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			handleClaude(w, r, id)
+		case "plugins/install":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			handleInstallPlugin(w, r, id)
+		case "credentials":
+			handleCredentials(w, r, id)
+		case "browser":
+			handleBrowser(w, r, id)
+		case "upload":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			handleUpload(w, r, id)
 		default:
+			if strings.HasPrefix(sub, "artifacts") {
+				handleArtifacts(w, r, id, strings.TrimPrefix(sub, "artifacts"))
+				return
+			}
+			if strings.HasPrefix(sub, "schedules") {
+				handleSchedules(w, r, id, strings.TrimPrefix(sub, "schedules"))
+				return
+			}
 			http.Error(w, "unknown subresource", http.StatusNotFound)
 		}
 	})

@@ -193,3 +193,29 @@
 @media (prefers-reduced-motion: reduce) {
     .animate-soft-pulse, .shimmer-text { animation: none; }
 }
+
+/* -------------------------------------------------------------------------
+   Calm scrollbar — blends with the linen background instead of flashing a
+   white track next to the panel content. Applied via .scrollbar-calm.
+   ------------------------------------------------------------------------- */
+.scrollbar-calm {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--stone) 40%, transparent) transparent;
+}
+.scrollbar-calm::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.scrollbar-calm::-webkit-scrollbar-track {
+    background: transparent;
+}
+.scrollbar-calm::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--stone) 35%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+.scrollbar-calm::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--stone) 60%, transparent);
+    background-clip: padding-box;
+}

@@ -1,15 +1,118 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Layers, Paperclip, Send, Workflow } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MessageCircle, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
-import type { Agent, Message } from "./types";
+import type { Agent, Artifact, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Schedule, Skill } from "./types";
 
 const POLL_MS = 2000;
+const PANEL_STORAGE_KEY = "fleetview-thread-panel-open";
+
+function useThreadPanel() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(PANEL_STORAGE_KEY);
+    return v === null ? true : v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(PANEL_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
+    close: useCallback(() => set(false), [set]),
+  };
+}
+
+const SIDEBAR_STORAGE_KEY = "fleetview.sidebar.open";
+
+function useFleetSidebar() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    return v === null ? true : v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(SIDEBAR_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
+  };
+}
+
+const ARTIFACT_PANEL_STORAGE_KEY = "fleetview.artifactPanel.open";
+
+function useArtifactPanel() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(ARTIFACT_PANEL_STORAGE_KEY);
+    return v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(ARTIFACT_PANEL_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
+    close: useCallback(() => set(false), [set]),
+  };
+}
+
+const SCHEDULES_PANEL_STORAGE_KEY = "fleetview.schedulesPanel.open";
+
+function useSchedulesPanel() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(SCHEDULES_PANEL_STORAGE_KEY);
+    return v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(SCHEDULES_PANEL_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
+    close: useCallback(() => set(false), [set]),
+  };
+}
 
 export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const panel = useThreadPanel();
+  const artifactPanel = useArtifactPanel();
+  const schedulesPanel = useSchedulesPanel();
+  const sidebar = useFleetSidebar();
+  // Mutually-exclusive panels — opening one auto-closes the others.
+  const toggleSettings = useCallback(() => {
+    if (!panel.open) {
+      artifactPanel.close();
+      schedulesPanel.close();
+    }
+    panel.toggle();
+  }, [panel, artifactPanel, schedulesPanel]);
+  const toggleArtifact = useCallback(() => {
+    if (!artifactPanel.open) {
+      panel.close();
+      schedulesPanel.close();
+    }
+    artifactPanel.toggle();
+  }, [panel, artifactPanel, schedulesPanel]);
+  const toggleSchedules = useCallback(() => {
+    if (!schedulesPanel.open) {
+      panel.close();
+      artifactPanel.close();
+    }
+    schedulesPanel.toggle();
+  }, [panel, artifactPanel, schedulesPanel]);
   // Map of agent id → timestamp of a just-sent message. Used to show the
   // thinking shimmer immediately, before backend polling catches up to the
   // agent entering "streaming" state. Cleared by the effect below.
@@ -86,18 +189,49 @@ export function App() {
   const isPending = selected ? !!pendingSends[selected.id] : false;
 
   return (
-    <div className="h-screen grid grid-cols-[380px_1fr] bg-background text-foreground">
-      <Sidebar
-        agents={agents}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-      />
-      <Detail
+    <div className="h-screen flex bg-background text-foreground">
+      <div
+        className={cn(
+          "shrink-0 overflow-hidden transition-[width] duration-200 ease-in-out",
+          sidebar.open ? "w-[280px]" : "w-[56px]"
+        )}
+      >
+        <Sidebar
+          agents={agents}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          collapsed={!sidebar.open}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <Detail
+          agent={selected}
+          messages={messages}
+          isPending={isPending}
+          onSent={markPending}
+          panelOpen={panel.open}
+          onTogglePanel={toggleSettings}
+          artifactPanelOpen={artifactPanel.open}
+          onToggleArtifactPanel={toggleArtifact}
+          schedulesPanelOpen={schedulesPanel.open}
+          onToggleSchedulesPanel={toggleSchedules}
+          sidebarOpen={sidebar.open}
+          onToggleSidebar={sidebar.toggle}
+        />
+      </div>
+      <ThreadPanel
         agent={selected}
-        messages={messages}
-        isPending={isPending}
-        onSent={markPending}
-        onBack={() => setSelectedId(null)}
+        open={panel.open}
+      />
+      <ArtifactPanel
+        agent={selected}
+        open={artifactPanel.open}
+        onClose={artifactPanel.close}
+      />
+      <SchedulesPanel
+        agent={selected}
+        open={schedulesPanel.open}
+        onClose={schedulesPanel.close}
       />
     </div>
   );
@@ -117,7 +251,7 @@ function KindTile({
     dispatcher: {
       bg: "bg-[color:var(--clay-soft)]",
       fg: "text-[color:var(--clay)]",
-      Icon: Workflow,
+      Icon: MessageCircle,
     },
     orchestrator: {
       bg: "bg-[color:var(--matcha-soft)]",
@@ -172,25 +306,56 @@ function Sidebar({
   agents,
   selectedId,
   onSelect,
+  collapsed = false,
 }: {
   agents: Agent[] | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  collapsed?: boolean;
 }) {
   const tree = useMemo(() => buildTree(agents ?? []), [agents]);
-  return (
-    <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0">
-      <div className="px-8 pt-10 pb-6 flex items-baseline justify-between">
-        <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
-          Fleet
-        </h1>
-        {agents !== null && (
-          <span className="text-xs tabular-nums text-muted-foreground font-mono">
-            {agents.length}
+
+  if (collapsed) {
+    // Rail mode: tiny serif "b" anchor up top (so the brand doesn't
+    // disappear with the nav) + clickable kind tiles stacked below.
+    const ordered = flattenTree(tree);
+    return (
+      <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center overflow-hidden">
+        <div className="pt-10 pb-5">
+          <span className="font-[family-name:var(--font-heading)] text-[28px] leading-none tracking-tight text-foreground lowercase">
+            b
           </span>
-        )}
+        </div>
+        <div className="flex flex-col items-center gap-1.5 pb-6">
+          {ordered.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => onSelect(a.id)}
+              title={a.id}
+              className={cn(
+                "rounded-lg p-1.5 transition-colors",
+                a.id === selectedId
+                  ? "bg-card shadow-sm ring-1 ring-border/70"
+                  : "hover:bg-sidebar-accent/60"
+              )}
+            >
+              <KindTile kind={a.kind} size={24} />
+            </button>
+          ))}
+        </div>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px]">
+      <div className="px-8 pt-10 pb-6">
+        <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
+          beepboop
+        </h1>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-8 space-y-2">
+      <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pb-8 space-y-2">
         {agents === null && (
           <p className="text-muted-foreground text-sm px-4 py-6 italic">loading…</p>
         )}
@@ -211,6 +376,19 @@ function Sidebar({
   );
 }
 
+// Walk the tree depth-first into a flat ordered list, preserving the
+// dispatcher → orchestrators → workers grouping. Used by the
+// collapsed rail.
+function flattenTree(tree: Tree): Agent[] {
+  const out: Agent[] = [];
+  const walk = (a: Agent) => {
+    out.push(a);
+    for (const k of tree.children.get(a.id) ?? []) walk(k);
+  };
+  for (const r of tree.roots) walk(r);
+  return out;
+}
+
 function AgentNode({
   agent,
   tree,
@@ -226,6 +404,11 @@ function AgentNode({
 }) {
   const kids = tree.children.get(agent.id) ?? [];
   const isSelected = agent.id === selectedId;
+  const isWorker = agent.kind === "worker";
+  // Dispatchers and orchestrators read better as a name + status only;
+  // descriptions belong on workers where their narrow scope is the
+  // distinguishing detail.
+  const showDescription = isWorker && !!agent.description;
   const stateHint =
     agent.status === "streaming"
       ? "streaming"
@@ -235,32 +418,40 @@ function AgentNode({
       ? "stopped"
       : null;
 
+  // Visual hierarchy: dispatch and orchestrators sit at the same
+  // root indent (workers under their orchestrator stay nested). The
+  // dispatcher is the only "header" and gets a small gap below it
+  // before its orchestrator children to feel like a section.
+  const isDispatcher = agent.kind === "dispatcher";
+  const kidIndent = isDispatcher ? "" : "ml-5 mt-1 space-y-1";
+  const kidsTopGap = isDispatcher ? "mt-2.5 space-y-1" : "";
+
   return (
-    <div>
+    <div className={isDispatcher && depth === 0 ? "pb-1.5" : ""}>
       <button
         type="button"
         onClick={() => onSelect(agent.id)}
         className={cn(
-          "w-full text-left flex items-start gap-3.5 px-3.5 py-3 rounded-xl transition-colors duration-150",
+          "w-full text-left flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg transition-colors duration-150",
           isSelected
             ? "bg-card shadow-sm ring-1 ring-border/70"
             : "hover:bg-sidebar-accent/60"
         )}
       >
-        <KindTile kind={agent.kind} />
-        <div className="min-w-0 flex-1 pt-0.5">
-          <div className="font-mono text-[13px] font-medium tracking-tight text-foreground truncate">
-            {agent.id}
+        <KindTile kind={agent.kind} size={26} />
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-[12.5px] font-medium tracking-tight text-foreground truncate">
+            {displayName(agent)}
           </div>
-          {agent.description && (
-            <div className="text-[12.5px] text-muted-foreground line-clamp-2 mt-0.5 leading-snug">
+          {showDescription && (
+            <div className="text-[11.5px] text-muted-foreground truncate mt-0.5 leading-snug">
               {agent.description}
             </div>
           )}
           {stateHint && (
             <div
               className={cn(
-                "text-[11px] mt-1.5 tracking-wide",
+                "text-[10.5px] mt-0.5 tracking-wide",
                 agent.status === "streaming"
                   ? "text-[color:var(--ochre)] animate-soft-pulse"
                   : agent.status === "trust-dialog" || agent.status === "permission-dialog"
@@ -274,7 +465,7 @@ function AgentNode({
         </div>
       </button>
       {kids.length > 0 && (
-        <div className="ml-6 mt-1 space-y-1.5 relative">
+        <div className={cn(kidIndent, kidsTopGap, "relative")}>
           {kids.map((k) => (
             <AgentNode
               key={k.id}
@@ -298,44 +489,196 @@ function Detail({
   messages,
   isPending,
   onSent,
-  onBack,
+  panelOpen,
+  onTogglePanel,
+  artifactPanelOpen,
+  onToggleArtifactPanel,
+  schedulesPanelOpen,
+  onToggleSchedulesPanel,
+  sidebarOpen,
+  onToggleSidebar,
 }: {
   agent: Agent | null;
   messages: Message[];
   isPending: boolean;
   onSent: (id: string) => void;
-  onBack: () => void;
+  panelOpen: boolean;
+  onTogglePanel: () => void;
+  artifactPanelOpen: boolean;
+  onToggleArtifactPanel: () => void;
+  schedulesPanelOpen: boolean;
+  onToggleSchedulesPanel: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
 }) {
   if (!agent) {
     return (
-      <div className="flex items-center justify-center text-muted-foreground text-sm italic">
-        select one
-      </div>
+      <section className="flex flex-col h-full min-h-0">
+        <TopNav
+          agent={null}
+          panelOpen={panelOpen}
+          onTogglePanel={onTogglePanel}
+          artifactPanelOpen={artifactPanelOpen}
+          onToggleArtifactPanel={onToggleArtifactPanel}
+          schedulesPanelOpen={schedulesPanelOpen}
+          onToggleSchedulesPanel={onToggleSchedulesPanel}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={onToggleSidebar}
+        />
+        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm italic">
+          select one
+        </div>
+      </section>
     );
   }
   return (
     <section className="flex flex-col h-full min-h-0">
-      <TopNav onBack={onBack} />
+      <TopNav
+        agent={agent}
+        panelOpen={panelOpen}
+        onTogglePanel={onTogglePanel}
+        artifactPanelOpen={artifactPanelOpen}
+        onToggleArtifactPanel={onToggleArtifactPanel}
+        schedulesPanelOpen={schedulesPanelOpen}
+        onToggleSchedulesPanel={onToggleSchedulesPanel}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={onToggleSidebar}
+      />
       <MessageStream agent={agent} messages={messages} isPending={isPending} />
       <NotifyBox agentId={agent.id} onSent={onSent} />
     </section>
   );
 }
 
-function TopNav({ onBack }: { onBack: () => void }) {
+function TopNav({
+  agent,
+  panelOpen,
+  onTogglePanel,
+  artifactPanelOpen,
+  onToggleArtifactPanel,
+  schedulesPanelOpen,
+  onToggleSchedulesPanel,
+  sidebarOpen,
+  onToggleSidebar,
+}: {
+  agent: Agent | null;
+  panelOpen: boolean;
+  onTogglePanel: () => void;
+  artifactPanelOpen: boolean;
+  onToggleArtifactPanel: () => void;
+  schedulesPanelOpen: boolean;
+  onToggleSchedulesPanel: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+}) {
+  const SettingsIcon = panelOpen ? PanelRightClose : PanelRight;
+  const SidebarIcon = sidebarOpen ? PanelLeftClose : PanelLeft;
   return (
-    <div className="flex items-center justify-between px-10 pt-8 pb-2">
+    <div className="flex items-center justify-between gap-5 px-10 pt-8 pb-2">
       <button
         type="button"
-        onClick={onBack}
-        className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+        onClick={onToggleSidebar}
+        title={sidebarOpen ? "Collapse fleet" : "Expand fleet"}
+        className="text-muted-foreground hover:text-foreground transition-colors"
       >
-        Back
+        <SidebarIcon className="w-4 h-4" strokeWidth={1.8} />
       </button>
-      <span className="text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-        Thread
-      </span>
+      <div className="flex items-center justify-end gap-5">
+        {agent && <BrowserButton agent={agent} />}
+        {agent && <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />}
+        {agent && (
+          <SchedulesNavButton agent={agent} open={schedulesPanelOpen} onToggle={onToggleSchedulesPanel} />
+        )}
+        <button
+          type="button"
+          onClick={onTogglePanel}
+          title={panelOpen ? "Hide settings panel" : "Show settings panel"}
+          className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+        >
+          <span>Settings</span>
+          <SettingsIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
+        </button>
+      </div>
     </div>
+  );
+}
+
+type BrowserState = {
+  port?: number;
+  profile?: string;
+  alive: boolean;
+  error?: string;
+  loading: boolean;
+};
+
+function BrowserButton({ agent }: { agent: Agent }) {
+  const [state, setState] = useState<BrowserState>({ alive: false, loading: false });
+  const eligible = agent.kind === "orchestrator" || agent.kind === "worker";
+
+  useEffect(() => {
+    if (!eligible) return;
+    let cancelled = false;
+    fetch(`/api/agents/${agent.id}/browser`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        setState((s) => ({ ...s, port: d.port, profile: d.profile, alive: !!d.alive }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, eligible]);
+
+  if (!eligible) return null;
+
+  const onClick = async () => {
+    setState((s) => ({ ...s, loading: true, error: undefined }));
+    try {
+      const r = await fetch(`/api/agents/${agent.id}/browser`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setState((s) => ({ ...s, loading: false, error: d.error || `HTTP ${r.status}` }));
+        return;
+      }
+      setState({
+        port: d.port,
+        profile: d.profile,
+        alive: !!d.alive,
+        loading: false,
+        error: d.error,
+      });
+    } catch (e: any) {
+      setState((s) => ({ ...s, loading: false, error: String(e?.message || e) }));
+    }
+  };
+
+  const title = state.error
+    ? `Browser launch failed: ${state.error}`
+    : state.alive
+      ? `Chrome live on :${state.port}\nProfile: ${state.profile}`
+      : state.port
+        ? `Launch space Chrome (port ${state.port})`
+        : "Launch space Chrome";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      disabled={state.loading}
+      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors disabled:opacity-60"
+    >
+      <span>Browser</span>
+      {state.loading ? (
+        <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.8} />
+      ) : (
+        <Globe
+          className={`w-3.5 h-3.5 ${state.alive ? "text-[var(--matcha)]" : ""}`}
+          strokeWidth={1.8}
+        />
+      )}
+    </button>
   );
 }
 
@@ -364,7 +707,7 @@ function MessageStream({
   const isStreaming = agent.status === "streaming" || isPending;
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
+    <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
       <div className="max-w-3xl mx-auto">
         <div className="mb-3">
           <KindTile kind={agent.kind} size={54} />
@@ -388,7 +731,7 @@ function MessageStream({
         ) : (
           <div className="space-y-4">
             {filtered.map((m, i) => (
-              <MessageRow key={i} m={m} agent={agent} />
+              <MessageRow key={i} m={m} />
             ))}
             {isStreaming && <ThinkingRow agent={agent} />}
           </div>
@@ -424,35 +767,252 @@ function ThinkingRow({ agent }: { agent: Agent }) {
 
 function titleFor(a: Agent): string {
   // Use the description as the display title when it's a single short sentence;
-  // otherwise fall back to the id so the serif headline reads cleanly.
+  // otherwise fall back to the friendly display name so the serif headline reads cleanly.
   const d = (a.description || "").trim();
   if (d && d.length <= 48 && !/\n/.test(d)) return d;
+  return displayName(a);
+}
+
+// displayName aliases the underlying agent id for UI surfaces. The
+// dispatcher's role is conversational (route requests, route replies),
+// so it reads more naturally as "chat" than "dispatch" in the
+// sidebar / page title — even though the on-disk id stays "dispatch".
+function displayName(a: Agent): string {
+  if (a.kind === "dispatcher") return "chat";
   return a.id;
 }
 
-function MessageRow({ m, agent }: { m: Message; agent: Agent }) {
+function MessageRow({ m }: { m: Message }) {
   // Two sides: user on the right (our side), assistant/agent on the left.
   // Tool blocks render centered, inline, in a muted style.
   if (m.role === "user") {
+    const cleaned = cleanUserText(m.text || "");
+    const { stripped, paths } = extractAttachments(cleaned);
+    const hasText = stripped.trim().length > 0;
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-[20px] rounded-br-md px-5 py-3 bg-secondary text-foreground text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-          {cleanUserText(m.text)}
-        </div>
+      <div className="flex flex-col items-end gap-1.5">
+        {paths.length > 0 && (
+          <div className="max-w-[78%] flex flex-wrap gap-1.5 justify-end">
+            {paths.map((p, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1.5 max-w-[260px] text-[12px] text-muted-foreground"
+                title={p}
+              >
+                <Paperclip className="w-3 h-3 shrink-0" strokeWidth={1.8} />
+                <span className="truncate">{attachmentDisplayName(p)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {hasText && (
+          <div className="max-w-[78%] rounded-[20px] rounded-br-md px-5 py-3 bg-secondary text-foreground text-[15px] leading-relaxed break-words">
+            <Markdown tone="light">{stripped}</Markdown>
+          </div>
+        )}
       </div>
     );
   }
   if (m.role === "assistant") {
+    // Left indent matches the input box's text start (NotifyBox textarea
+    // px-5 inside the same max-w-3xl column) so the conversation reads
+    // along a single column edge.
     return (
-      <div className="flex items-end gap-3">
-        <KindTile kind={agent.kind} size={34} />
-        <div className="max-w-[78%] rounded-[20px] rounded-bl-md px-5 py-3 bg-foreground text-background text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-          {m.text || ""}
-        </div>
+      <div className="max-w-[78%] pl-5 py-1 text-foreground text-[15px] leading-relaxed break-words">
+        <Markdown tone="light">{m.text || ""}</Markdown>
       </div>
     );
   }
   return null;
+}
+
+// ─── markdown ────────────────────────────────────────────────────
+//
+// Subtle, in-bubble markdown rendering. Bold/italic just shift weight
+// and slant; code gets a faint tint that reads against either bubble
+// color; lists indent gently; links underline on hover. Single
+// newlines stay as line breaks (remark-breaks) so plain-text replies
+// render the same as before.
+
+function Markdown({ children, tone }: { children: string; tone: "light" | "dark" }) {
+  const styles = MARKDOWN_TONE[tone];
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkBreaks]}
+      components={{
+        p: ({ children }) => <p className="my-1 first:mt-0 last:mb-0">{withIcons(children)}</p>,
+        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+        em: ({ children }) => <em className="italic">{children}</em>,
+        a: ({ href, children }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`${styles.link} underline-offset-2 hover:underline`}
+          >
+            {children}
+          </a>
+        ),
+        code: ({ className, children }) => {
+          // react-markdown v9: fenced code blocks get a `language-*`
+          // className from rehype; bare `<code>` (inline) does not.
+          if (!className) {
+            return (
+              <code className={`${styles.codeInline} px-[0.35em] py-[0.05em] rounded font-mono text-[0.9em]`}>
+                {children}
+              </code>
+            );
+          }
+          return <code className={`${className} font-mono text-[0.9em]`}>{children}</code>;
+        },
+        pre: ({ children }) => (
+          <pre className={`${styles.codeBlock} my-2 px-3 py-2 rounded-md overflow-x-auto leading-snug`}>
+            {children}
+          </pre>
+        ),
+        ul: ({ children }) => <ul className="my-1 list-disc pl-5 space-y-0.5 marker:opacity-60">{children}</ul>,
+        ol: ({ children }) => <ol className="my-1 list-decimal pl-5 space-y-0.5 marker:opacity-60">{children}</ol>,
+        li: ({ children }) => <li className="pl-0.5">{withIcons(children)}</li>,
+        h1: ({ children }) => <h3 className="font-[family-name:var(--font-heading)] text-[1.18em] tracking-tight mt-3 mb-1 first:mt-0">{withIcons(children)}</h3>,
+        h2: ({ children }) => <h3 className="font-[family-name:var(--font-heading)] text-[1.12em] tracking-tight mt-3 mb-1 first:mt-0">{withIcons(children)}</h3>,
+        h3: ({ children }) => <h3 className="text-[1.0em] font-semibold mt-2 mb-1 first:mt-0">{withIcons(children)}</h3>,
+        h4: ({ children }) => <h4 className="text-[0.97em] font-semibold mt-2 mb-1 first:mt-0">{withIcons(children)}</h4>,
+        blockquote: ({ children }) => (
+          <blockquote className={`my-2 pl-3 ${styles.quoteBorder} italic opacity-90`}>{withIcons(children)}</blockquote>
+        ),
+        hr: () => <hr className={`my-3 ${styles.hrColor}`} />,
+        table: ({ children }) => (
+          <div className="my-2 overflow-x-auto">
+            <table className="text-[0.92em] border-collapse">{children}</table>
+          </div>
+        ),
+        th: ({ children }) => <th className={`px-2 py-1 text-left font-semibold ${styles.tableBorder}`}>{withIcons(children)}</th>,
+        td: ({ children }) => <td className={`px-2 py-1 ${styles.tableBorder}`}>{withIcons(children)}</td>,
+      }}
+    >
+      {children}
+    </ReactMarkdown>
+  );
+}
+
+// Inline icon swap for the most common emojis Claude sprinkles into
+// chat — keeps the rest of the message untouched. Only walks through
+// block-element children (p, li, td, blockquote, headings) so code
+// blocks and `inline code` are never rewritten.
+type IconComponent = React.ComponentType<{ className?: string; strokeWidth?: number }>;
+
+const ICON_FOR_CHAR: Record<string, { Icon: IconComponent; tone: string }> = {
+  // Slim marks for the line-art glyphs
+  "✓": { Icon: Check as IconComponent, tone: "text-[var(--matcha)]" },
+  "✗": { Icon: XIcon as IconComponent, tone: "" },
+  "✘": { Icon: XIcon as IconComponent, tone: "" },
+  // Square-framed variants for the emoji forms (colored-square in source)
+  "✅": { Icon: SquareCheckBig as IconComponent, tone: "text-[var(--matcha)]" },
+  "❌": { Icon: SquareX as IconComponent, tone: "" },
+  "⚠": { Icon: TriangleAlert as IconComponent, tone: "" },
+  "⚠️": { Icon: TriangleAlert as IconComponent, tone: "" },
+};
+
+function withIcons(node: React.ReactNode): React.ReactNode {
+  if (typeof node === "string") return replaceEmojiInString(node);
+  if (Array.isArray(node)) {
+    return node.map((c, i) => <React.Fragment key={i}>{withIcons(c)}</React.Fragment>);
+  }
+  if (React.isValidElement(node)) {
+    const props = node.props as { children?: React.ReactNode };
+    if (props.children !== undefined) {
+      return React.cloneElement(
+        node as React.ReactElement<{ children?: React.ReactNode }>,
+        undefined,
+        withIcons(props.children),
+      );
+    }
+  }
+  return node;
+}
+
+function replaceEmojiInString(text: string): React.ReactNode {
+  const out: React.ReactNode[] = [];
+  let buf = "";
+  let i = 0;
+  const flush = () => {
+    if (buf) {
+      out.push(buf);
+      buf = "";
+    }
+  };
+  while (i < text.length) {
+    // Two-char (⚠ + variation selector U+FE0F) takes precedence.
+    const two = text.slice(i, i + 2);
+    const matched = ICON_FOR_CHAR[two] ? two : ICON_FOR_CHAR[text[i]] ? text[i] : null;
+    if (matched) {
+      flush();
+      const { Icon, tone } = ICON_FOR_CHAR[matched];
+      out.push(
+        <Icon
+          key={`ic-${i}`}
+          className={`inline-block w-[1em] h-[1em] align-text-bottom ${tone}`.trim()}
+          strokeWidth={2}
+        />,
+      );
+      i += matched.length;
+      continue;
+    }
+    buf += text[i];
+    i++;
+  }
+  flush();
+  if (out.length === 0) return text;
+  if (out.length === 1 && typeof out[0] === "string") return out[0];
+  return <>{out}</>;
+}
+
+const MARKDOWN_TONE = {
+  // light = the user-side bubble (linen secondary bg, dark text)
+  light: {
+    codeInline: "bg-black/8 text-foreground",
+    codeBlock: "bg-black/8 text-foreground",
+    link: "text-[var(--matcha)]",
+    quoteBorder: "border-l-2 border-foreground/25",
+    hrColor: "border-foreground/15",
+    tableBorder: "border border-foreground/15",
+  },
+  // dark = the assistant-side bubble (foreground bg, light text)
+  dark: {
+    codeInline: "bg-white/12 text-background",
+    codeBlock: "bg-white/12 text-background",
+    link: "text-[var(--matcha-soft)]",
+    quoteBorder: "border-l-2 border-background/30",
+    hrColor: "border-background/20",
+    tableBorder: "border border-background/20",
+  },
+} as const;
+
+// Pull the trailing "attached:\n<path>\n<path>" block out of a user
+// message so it can render as chips above the bubble. Path lines are
+// expected to be absolute (start with /) — anything else is left in
+// the text.
+function extractAttachments(text: string): { stripped: string; paths: string[] } {
+  const m = text.match(/(\n*)attached:\n((?:\/[^\n]+\n?)+)\s*$/);
+  if (!m) return { stripped: text, paths: [] };
+  const paths = m[2]
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.startsWith("/"));
+  if (paths.length === 0) return { stripped: text, paths: [] };
+  const stripped = text.slice(0, m.index).replace(/\s+$/, "");
+  return { stripped, paths };
+}
+
+// Strip the on-disk timestamp + random suffix that the upload handler
+// prepends so the chip shows the original filename.
+//   20260426-010619-ec1cdb1d-Screenshot 2026-04-24 at 8.46.15 PM.jpg
+//   →                       Screenshot 2026-04-24 at 8.46.15 PM.jpg
+function attachmentDisplayName(p: string): string {
+  const slash = p.lastIndexOf("/");
+  const base = slash < 0 ? p : p.slice(slash + 1);
+  const m = base.match(/^\d{8}-\d{6}-[a-f0-9]+-(.+)$/);
+  return m ? m[1] : base;
 }
 
 function cleanUserText(text?: string): string {
@@ -468,6 +1028,13 @@ function cleanUserText(text?: string): string {
 
 // ─── notify ──────────────────────────────────────────────────────
 
+type Attachment = {
+  path: string;
+  filename: string;
+  size: number;
+  media_type?: string;
+};
+
 function NotifyBox({
   agentId,
   onSent,
@@ -477,58 +1044,2031 @@ function NotifyBox({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const upload = useCallback(
+    async (files: FileList | File[]) => {
+      const arr = Array.from(files);
+      if (arr.length === 0) return;
+      setUploading((n) => n + arr.length);
+      await Promise.all(
+        arr.map(async (f) => {
+          const fd = new FormData();
+          fd.append("file", f);
+          try {
+            const r = await fetch(`/api/agents/${agentId}/upload`, {
+              method: "POST",
+              body: fd,
+            });
+            if (r.ok) {
+              const a: Attachment = await r.json();
+              setAttachments((cur) => [...cur, a]);
+            }
+          } finally {
+            setUploading((n) => n - 1);
+          }
+        }),
+      );
+    },
+    [agentId],
+  );
+
+  const removeAttachment = useCallback((idx: number) => {
+    setAttachments((arr) => arr.filter((_, i) => i !== idx));
+  }, []);
 
   const send = useCallback(async () => {
-    if (!text.trim()) return;
+    const body = text.trim();
+    if (!body && attachments.length === 0) return;
+    // Avoid leading whitespace on attachment lines: Claude Code's TUI
+    // treats `\n` followed by whitespace (or a `-`) as a paste-end
+    // heuristic during bracketed paste and drops everything after.
+    // Bare paths on their own lines pass through cleanly; the orch's
+    // Read tool handles each path the same way.
+    const message =
+      attachments.length === 0
+        ? body
+        : `${body}${body ? "\n\n" : ""}attached:\n${attachments.map((a) => a.path).join("\n")}`;
     setSending(true);
-    // Optimistically kick off the shimmer the instant the user sends,
-    // BEFORE the network round-trip. The App-level effect will clear
-    // the flag once the backend reports streaming (or after 60s).
     onSent(agentId);
     try {
       const r = await fetch(`/api/agents/${agentId}/notify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, from: "ui" }),
+        body: JSON.stringify({ message, from: "ui" }),
       });
-      if (r.ok) setText("");
+      if (r.ok) {
+        setText("");
+        setAttachments([]);
+      }
     } finally {
       setSending(false);
     }
-  }, [agentId, text, onSent]);
+  }, [agentId, text, attachments, onSent]);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      if (e.dataTransfer?.files?.length) upload(e.dataTransfer.files);
+    },
+    [upload],
+  );
+
+  const hasAttachments = attachments.length > 0;
+  const hasText = text.trim().length > 0;
+  const canSend = (hasText || hasAttachments) && !sending && uploading === 0;
 
   return (
     <div className="px-10 pb-8 pt-4">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-2 rounded-2xl bg-card ring-1 ring-border/70 shadow-sm pr-2">
-          <textarea
-            className="flex-1 resize-none bg-transparent outline-none px-5 py-3.5 text-[15px] leading-relaxed min-h-[56px] placeholder:text-muted-foreground/70"
-            placeholder="Write here"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          className={cn(
+            "relative rounded-2xl bg-card ring-1 shadow-sm transition-colors",
+            dragOver ? "ring-[var(--matcha)] bg-[color-mix(in_oklch,var(--matcha)_8%,var(--card))]" : "ring-border/70"
+          )}
+        >
+          {hasAttachments && (
+            <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+              {attachments.map((a, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1.5 max-w-[260px] text-[12px] px-2 py-1 rounded-full bg-secondary text-foreground"
+                  title={a.path}
+                >
+                  <Paperclip className="w-3 h-3 shrink-0" strokeWidth={1.8} />
+                  <span className="truncate">{a.filename}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(i)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label={`Remove ${a.filename}`}
+                  >
+                    <XIcon className="w-3 h-3" strokeWidth={1.8} />
+                  </button>
+                </span>
+              ))}
+              {uploading > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-[12px] px-2 py-1 rounded-full bg-secondary text-muted-foreground">
+                  <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+                  uploading {uploading}…
+                </span>
+              )}
+            </div>
+          )}
+          <div className="flex items-end gap-2 pr-2 pb-2">
+            <textarea
+              className="flex-1 resize-none bg-transparent outline-none px-5 py-4 text-[15px] leading-relaxed min-h-[112px] placeholder:text-muted-foreground/70"
+              placeholder={dragOver ? "Drop files to attach" : "Write here"}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+              }}
+              onPaste={(e) => {
+                if (e.clipboardData?.files?.length) {
+                  e.preventDefault();
+                  upload(e.clipboardData.files);
+                }
+              }}
+              disabled={sending}
+              rows={3}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending}
+              title="Attach files"
+              className="flex items-center justify-center h-10 w-10 rounded-xl text-muted-foreground hover:text-foreground hover:bg-background transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Paperclip size={16} strokeWidth={1.8} />
+            </button>
+            <button
+              type="button"
+              onClick={send}
+              disabled={!canSend}
+              title="send"
+              className="flex items-center justify-center h-10 w-10 rounded-xl bg-background ring-1 ring-border/70 hover:ring-border transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {sending || uploading > 0 ? (
+                <Loader2 className="text-muted-foreground animate-spin" size={16} strokeWidth={1.8} />
+              ) : (
+                <Send className="text-foreground" size={16} strokeWidth={1.8} />
+              )}
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.length) upload(e.target.files);
+              e.target.value = "";
             }}
-            disabled={sending}
-            rows={1}
           />
-          <button
-            type="button"
-            onClick={send}
-            disabled={sending || !text.trim()}
-            title="send"
-            className="flex items-center justify-center h-10 w-10 rounded-xl bg-background ring-1 ring-border/70 hover:ring-border transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {sending ? (
-              <span className="text-muted-foreground">…</span>
-            ) : text.trim() ? (
-              <Send className="text-foreground" size={16} strokeWidth={1.8} />
-            ) : (
-              <Paperclip className="text-muted-foreground" size={16} strokeWidth={1.8} />
-            )}
-          </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── thread panel ────────────────────────────────────────────────
+
+type PanelRoute =
+  | { kind: "home" }
+  | { kind: "marketplace" }
+  | {
+      kind: "plugin";
+      pluginName: string;
+      marketplace: string;
+      origin: "home" | "marketplace";
+    };
+
+function ThreadPanel({
+  agent,
+  open,
+}: {
+  agent: Agent | null;
+  open: boolean;
+}) {
+  const [data, setData] = useState<ClaudeDirView | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
+  const [route, setRoute] = useState<PanelRoute>({ kind: "home" });
+
+  // Reset to home whenever the selected agent changes.
+  useEffect(() => {
+    setRoute({ kind: "home" });
+    setInstallErrors({});
+  }, [agent?.id]);
+
+  const openPlugin = useCallback(
+    (pluginName: string, marketplace: string, origin: "home" | "marketplace") => {
+      setRoute({ kind: "plugin", pluginName, marketplace, origin });
+    },
+    []
+  );
+
+  const load = useCallback(() => {
+    if (!agent) return;
+    fetch(`/api/agents/${agent.id}/claude`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ClaudeDirView | null) => setData(d))
+      .catch(() => {});
+  }, [agent?.id]);
+
+  useEffect(() => {
+    if (!open || !agent) {
+      setData(null);
+      return;
+    }
+    let stop = false;
+    setLoading(true);
+    load();
+    setLoading(false);
+    // Light refresh so newly-installed plugins appear within a few seconds.
+    const h = setInterval(() => {
+      if (!stop) load();
+    }, 4000);
+    return () => {
+      stop = true;
+      clearInterval(h);
+    };
+  }, [agent?.id, open, load]);
+
+  const install = useCallback(
+    async (pluginName: string, marketplace: string) => {
+      if (!agent) return;
+      const key = `${pluginName}@${marketplace}`;
+      setInstalling((s) => new Set(s).add(key));
+      setInstallErrors((e) => {
+        if (!(key in e)) return e;
+        const n = { ...e };
+        delete n[key];
+        return n;
+      });
+      try {
+        const r = await fetch(`/api/agents/${agent.id}/plugins/install`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plugin: pluginName, marketplace, restart: true }),
+        });
+        if (!r.ok) {
+          const msg = (await r.text()).trim() || `HTTP ${r.status}`;
+          setInstallErrors((e) => ({ ...e, [key]: summarizeInstallError(msg) }));
+        }
+      } catch (err) {
+        setInstallErrors((e) => ({ ...e, [key]: String(err) }));
+      } finally {
+        setInstalling((s) => {
+          const n = new Set(s);
+          n.delete(key);
+          return n;
+        });
+      }
+    },
+    [agent]
+  );
+
+  // Clear an install error when the poll shows the plugin landed after all.
+  useEffect(() => {
+    if (!data) return;
+    const installed = new Set(
+      (data.plugins ?? []).map((p) => `${p.name}@${p.marketplace}`)
+    );
+    setInstallErrors((e) => {
+      let changed = false;
+      const n = { ...e };
+      for (const k of Object.keys(n)) {
+        if (installed.has(k)) {
+          delete n[k];
+          changed = true;
+        }
+      }
+      return changed ? n : e;
+    });
+  }, [data]);
+
+  return (
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-sidebar h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[340px] xl:w-[380px]" : "w-0 border-l-0"
+      )}
+    >
+      {open && (
+        <div className="h-full flex flex-col">
+          {route.kind === "home" && (
+            <PanelHeader agent={agent} view={data} route={route} />
+          )}
+          <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto">
+            {!agent && (
+              <p className="px-8 py-6 text-sm italic text-muted-foreground">
+                select an agent
+              </p>
+            )}
+            {agent && loading && !data && (
+              <p className="px-8 py-6 text-sm italic text-muted-foreground">
+                scanning…
+              </p>
+            )}
+            {agent && data && route.kind === "home" && (
+              <HomeView
+                view={data}
+                onBrowse={() => setRoute({ kind: "marketplace" })}
+                onOpenPlugin={(name, mp) => openPlugin(name, mp, "home")}
+              />
+            )}
+            {agent && data && route.kind === "marketplace" && (
+              <MarketplaceView
+                view={data}
+                installing={installing}
+                errors={installErrors}
+                onInstall={install}
+                onOpenPlugin={(name, mp) => openPlugin(name, mp, "marketplace")}
+                onBack={() => setRoute({ kind: "home" })}
+              />
+            )}
+            {agent && data && route.kind === "plugin" && (
+              <PluginDetailView
+                view={data}
+                pluginName={route.pluginName}
+                marketplace={route.marketplace}
+                installing={installing.has(
+                  `${route.pluginName}@${route.marketplace}`
+                )}
+                error={
+                  installErrors[`${route.pluginName}@${route.marketplace}`]
+                }
+                onInstall={install}
+                onBack={() =>
+                  setRoute({
+                    kind: route.origin === "marketplace" ? "marketplace" : "home",
+                  })
+                }
+                backLabel={route.origin === "marketplace" ? "Marketplace" : "Installed"}
+              />
+            )}
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function PanelHeader({
+  agent,
+  view,
+  route,
+}: {
+  agent: Agent | null;
+  view: ClaudeDirView | null;
+  route: PanelRoute;
+}) {
+  const sourceLabel = !view
+    ? ""
+    : view.source === "own"
+      ? "own .claude"
+      : view.source === "inherited"
+        ? `inherited · ${view.source_id}`
+        : "global ~/.claude";
+  const crumb =
+    route.kind === "home"
+      ? "Installed"
+      : route.kind === "marketplace"
+        ? "Installed · Marketplace"
+        : route.origin === "marketplace"
+          ? "Marketplace · Plugin"
+          : "Installed · Plugin";
+  return (
+    <div className="px-8 pt-8 pb-5 border-b border-border/50">
+      <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+        {crumb}
+      </div>
+      <div className="mt-1 font-[family-name:var(--font-heading)] text-[28px] leading-[1] tracking-tight text-foreground">
+        {agent?.id ?? "—"}
+      </div>
+      {sourceLabel && (
+        <div className="mt-2 text-[11px] text-muted-foreground font-mono truncate">
+          {sourceLabel}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HomeView({
+  view,
+  onBrowse,
+  onOpenPlugin,
+}: {
+  view: ClaudeDirView;
+  onBrowse: () => void;
+  onOpenPlugin: (plugin: string, marketplace: string) => void;
+}) {
+  const skills = view.skills ?? [];
+  const agents = view.agents ?? [];
+  const commands = view.commands ?? [];
+  const plugins = view.plugins ?? [];
+  const markets = view.marketplaces ?? [];
+  const availableCount = markets.reduce(
+    (acc, m) => acc + m.plugins.filter((p) => !p.installed).length,
+    0
+  );
+  const anythingInstalled =
+    skills.length + agents.length + commands.length + plugins.length > 0 ||
+    !!view.memory;
+  return (
+    <div className="px-8 py-6 space-y-9">
+      {!anythingInstalled && markets.length === 0 && (
+        <p className="text-sm italic text-muted-foreground">
+          nothing installed yet
+        </p>
+      )}
+      {markets.length > 0 && (
+        <BrowseEntry
+          totalAvailable={availableCount}
+          totalPlugins={markets.reduce((acc, m) => acc + m.plugins.length, 0)}
+          onClick={onBrowse}
+        />
+      )}
+      {plugins.length > 0 && (
+        <Section icon={Package} label="Plugins" count={plugins.length}>
+          {plugins.map((p) => (
+            <PluginRow
+              key={`${p.name}@${p.marketplace}`}
+              plugin={p}
+              onOpen={() => onOpenPlugin(p.name, p.marketplace)}
+            />
+          ))}
+        </Section>
+      )}
+      {skills.length > 0 && (
+        <Section icon={Sparkles} label="Skills" count={skills.length}>
+          {skills.map((s) => (
+            <SkillRow key={s.name} skill={s} />
+          ))}
+        </Section>
+      )}
+      {agents.length > 0 && (
+        <Section icon={Users} label="Agents" count={agents.length}>
+          {agents.map((a) => (
+            <NamedRow key={a.name} item={a} />
+          ))}
+        </Section>
+      )}
+      {commands.length > 0 && (
+        <Section icon={TerminalSquare} label="Commands" count={commands.length}>
+          {commands.map((c) => (
+            <NamedRow key={c.name} item={c} />
+          ))}
+        </Section>
+      )}
+      {view.memory && (
+        <Section icon={BookOpen} label="Memory">
+          <div className="text-[13px] leading-relaxed text-foreground/90">
+            {view.memory.preview ||
+              <span className="italic text-muted-foreground">empty</span>}
+          </div>
+          <div className="mt-2 text-[10px] text-muted-foreground font-mono tabular-nums">
+            CLAUDE.md · {formatBytes(view.memory.bytes)}
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function MarketplaceView({
+  view,
+  installing,
+  errors,
+  onInstall,
+  onOpenPlugin,
+  onBack,
+}: {
+  view: ClaudeDirView;
+  installing: Set<string>;
+  errors: Record<string, string>;
+  onInstall: (plugin: string, marketplace: string) => void;
+  onOpenPlugin: (plugin: string, marketplace: string) => void;
+  onBack: () => void;
+}) {
+  const markets = view.marketplaces ?? [];
+  return (
+    <div className="px-8 pt-8 pb-6 space-y-9">
+      <BackCrumb label="Installed" onClick={onBack} />
+      {markets.length === 0 && (
+        <p className="text-sm italic text-muted-foreground">
+          no marketplaces registered
+        </p>
+      )}
+      {markets.map((m) => (
+        <Section
+          key={m.name}
+          icon={Store}
+          label={m.name}
+          count={m.plugins.length}
+        >
+          {m.plugins.map((mp) => {
+            const key = `${mp.name}@${m.name}`;
+            return (
+              <MarketRow
+                key={mp.name}
+                plugin={mp}
+                marketplace={m.name}
+                installing={installing.has(key)}
+                error={errors[key]}
+                onInstall={onInstall}
+                onOpen={() => onOpenPlugin(mp.name, m.name)}
+              />
+            );
+          })}
+        </Section>
+      ))}
+    </div>
+  );
+}
+
+function PluginDetailView({
+  view,
+  pluginName,
+  marketplace,
+  installing,
+  error,
+  onInstall,
+  onBack,
+  backLabel,
+}: {
+  view: ClaudeDirView;
+  pluginName: string;
+  marketplace: string;
+  installing: boolean;
+  error?: string;
+  onInstall: (plugin: string, marketplace: string) => void;
+  onBack: () => void;
+  backLabel: string;
+}) {
+  const installed = (view.plugins ?? []).find(
+    (p) => p.name === pluginName && p.marketplace === marketplace
+  );
+  const market = (view.marketplaces ?? [])
+    .find((m) => m.name === marketplace)
+    ?.plugins.find((p) => p.name === pluginName);
+
+  const title = pluginName;
+  const description = installed?.description || market?.description;
+  const author = installed?.author;
+  const version = installed?.version;
+  const category = market?.category;
+  const isInstalled = !!installed;
+  const enabled = installed?.enabled ?? false;
+
+  return (
+    <div className="px-8 pt-8 pb-6 space-y-6">
+      <BackCrumb label={backLabel} onClick={onBack} />
+
+      <header className="space-y-2">
+        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
+          <Package className="w-3 h-3" strokeWidth={1.8} />
+          Plugin
+        </div>
+        <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
+          {title}
+        </h3>
+        <div className="text-[11px] text-muted-foreground font-mono truncate">
+          {[marketplace, version ? `v${version}` : null, author ? `by ${author}` : null]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+        {category && (
+          <div className="text-[10px] tracking-[0.22em] uppercase text-muted-foreground">
+            {category}
+          </div>
+        )}
+      </header>
+
+      <div className="flex items-center gap-2">
+        {isInstalled ? (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[10px] tracking-[0.22em] uppercase ring-1",
+              enabled
+                ? "ring-[color:var(--matcha-soft)] text-[color:var(--primary)] bg-[color:var(--matcha-soft)]/50"
+                : "ring-border/70 text-muted-foreground"
+            )}
+          >
+            {enabled ? "installed · enabled" : "installed · disabled"}
+          </span>
+        ) : (
+          <button
+            type="button"
+            disabled={installing}
+            onClick={() => onInstall(pluginName, marketplace)}
+            className={cn(
+              "inline-flex items-center gap-1.5 h-7 px-3 rounded-md bg-background ring-1 transition text-[10px] tracking-[0.22em] uppercase disabled:opacity-40",
+              error
+                ? "ring-[color:var(--clay)]/40 text-[color:var(--clay)] hover:ring-[color:var(--clay)]/70"
+                : "ring-border/70 text-foreground hover:ring-border"
+            )}
+          >
+            {installing ? "installing…" : error ? "Retry install" : (
+              <>
+                <Plus className="w-3 h-3" strokeWidth={1.8} />
+                Install
+              </>
+            )}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <p className="text-[11px] leading-snug text-[color:var(--clay)]/90">
+          {error}
+        </p>
+      )}
+
+      {description && (
+        <section>
+          <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-2">
+            About
+          </div>
+          <p className="text-[13px] leading-relaxed text-foreground/90">
+            {description}
+          </p>
+        </section>
+      )}
+
+      <section>
+        <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-2">
+          Setup
+        </div>
+        {!isInstalled && (
+          <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+            Install the plugin first to see any setup steps.
+          </p>
+        )}
+        {isInstalled && (!installed?.credentials || installed.credentials.length === 0) && (
+          <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+            No credentials required. Claude Code will load this plugin on its next start.
+          </p>
+        )}
+        {isInstalled && installed?.credentials && installed.credentials.length > 0 && (
+          <CredentialForm
+            agentId={view.source === "global" ? "" : view.source_id || ""}
+            plugin={pluginName}
+            marketplace={marketplace}
+            credentials={installed.credentials}
+          />
+        )}
+      </section>
+    </div>
+  );
+}
+
+// CredentialForm renders one field per declared credential. Values save
+// on blur via POST /api/agents/:id/credentials → macOS Keychain.
+// Existing values aren't pulled back (the keychain doesn't expose them
+// here); the field only tracks saved/required state.
+function CredentialForm({
+  agentId,
+  plugin,
+  marketplace,
+  credentials,
+}: {
+  agentId: string;
+  plugin: string;
+  marketplace: string;
+  credentials: CredentialDecl[];
+}) {
+  return (
+    <div className="space-y-4">
+      {credentials.map((c) => (
+        <CredentialField
+          key={c.key}
+          agentId={agentId}
+          plugin={plugin}
+          marketplace={marketplace}
+          decl={c}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CredentialField({
+  agentId,
+  plugin,
+  marketplace,
+  decl,
+}: {
+  agentId: string;
+  plugin: string;
+  marketplace: string;
+  decl: CredentialDecl;
+}) {
+  const [value, setValue] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(decl.set);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = useCallback(async () => {
+    if (!value.trim() || !agentId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agents/${agentId}/credentials`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plugin, marketplace, key: decl.key, value }),
+      });
+      if (!r.ok) {
+        setError((await r.text()).trim() || `HTTP ${r.status}`);
+      } else {
+        setSaved(true);
+        setValue("");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [agentId, plugin, marketplace, decl.key, value]);
+
+  const clear = useCallback(async () => {
+    if (!agentId) return;
+    await fetch(`/api/agents/${agentId}/credentials`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plugin, marketplace, key: decl.key }),
+    });
+    setSaved(false);
+    setValue("");
+  }, [agentId, plugin, marketplace, decl.key]);
+
+  const placeholder = saved ? "•••••• saved in Keychain — enter to replace" : "—";
+
+  return (
+    <div>
+      <div className="flex items-baseline gap-2">
+        <label className="text-[12px] font-medium text-foreground">
+          {decl.label || decl.key}
+        </label>
+        {decl.required && (
+          <span className="text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+            required
+          </span>
+        )}
+        {saved && (
+          <span className="inline-flex items-center gap-1 text-[9px] tracking-[0.22em] uppercase text-[color:var(--primary)]">
+            <Check className="w-2.5 h-2.5" strokeWidth={2.2} />
+            saved
+          </span>
+        )}
+      </div>
+      {decl.description && (
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+          {decl.description}
+        </p>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <div className="flex-1 flex items-center gap-2 h-9 px-3 rounded-lg bg-background ring-1 ring-border/70 focus-within:ring-border">
+          <KeyRound className="w-3.5 h-3.5 text-muted-foreground shrink-0" strokeWidth={1.8} />
+          <input
+            type={reveal ? "text" : "password"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={save}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            placeholder={placeholder}
+            className="flex-1 min-w-0 bg-transparent outline-none text-[12px] text-foreground placeholder:text-muted-foreground/60 font-mono"
+          />
+          {value && (
+            <button
+              type="button"
+              onClick={() => setReveal((r) => !r)}
+              title={reveal ? "Hide" : "Show"}
+              className="text-muted-foreground hover:text-foreground shrink-0"
+            >
+              {reveal ? (
+                <EyeOff className="w-3.5 h-3.5" strokeWidth={1.8} />
+              ) : (
+                <Eye className="w-3.5 h-3.5" strokeWidth={1.8} />
+              )}
+            </button>
+          )}
+        </div>
+        {saved && !value && (
+          <button
+            type="button"
+            onClick={clear}
+            title="Remove from Keychain"
+            className="text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-[color:var(--clay)] transition-colors"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {saving && (
+        <p className="mt-1 text-[10px] italic text-muted-foreground">saving…</p>
+      )}
+      {error && (
+        <p className="mt-1 text-[11px] text-[color:var(--clay)]/90">{error}</p>
+      )}
+    </div>
+  );
+}
+
+function BrowseEntry({
+  totalAvailable,
+  totalPlugins,
+  onClick,
+}: {
+  totalAvailable: number;
+  totalPlugins: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group w-full flex items-center gap-3 px-3.5 py-3 rounded-xl bg-background ring-1 ring-border/60 hover:ring-border transition-colors text-left"
+    >
+      <div className="shrink-0 w-8 h-8 rounded-lg bg-[color:var(--matcha-soft)] flex items-center justify-center">
+        <Store
+          className="text-[color:var(--primary)]"
+          size={14}
+          strokeWidth={1.8}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-medium text-foreground">
+          Marketplace
+        </div>
+        <div className="text-[11px] text-muted-foreground font-mono">
+          {totalAvailable} available · {totalPlugins} total
+        </div>
+      </div>
+      <ChevronRight
+        className="shrink-0 text-muted-foreground group-hover:text-foreground transition-colors"
+        size={14}
+        strokeWidth={1.8}
+      />
+    </button>
+  );
+}
+
+function BackCrumb({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-1.5 -ml-0.5 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+    >
+      <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.8} />
+      {label}
+    </button>
+  );
+}
+
+function PluginRow({
+  plugin,
+  onOpen,
+}: {
+  plugin: Plugin;
+  onOpen: () => void;
+}) {
+  return (
+    <NavRow
+      title={plugin.name}
+      suffix={
+        !plugin.enabled ? (
+          <span className="text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+            disabled
+          </span>
+        ) : null
+      }
+      onClick={onOpen}
+    />
+  );
+}
+
+function MarketRow({
+  plugin,
+  marketplace,
+  installing,
+  error,
+  onInstall,
+  onOpen,
+}: {
+  plugin: MarketPlugin;
+  marketplace: string;
+  installing: boolean;
+  error?: string;
+  onInstall: (plugin: string, marketplace: string) => void;
+  onOpen: () => void;
+}) {
+  const trailing = plugin.installed ? (
+    <span className="shrink-0 text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+      installed
+    </span>
+  ) : (
+    <button
+      type="button"
+      disabled={installing}
+      onClick={(e) => {
+        e.stopPropagation();
+        onInstall(plugin.name, marketplace);
+      }}
+      title={installing ? "installing…" : error ? "Retry install" : `Install ${plugin.name}`}
+      className={cn(
+        "shrink-0 flex items-center gap-1 h-6 px-2 rounded-md bg-background ring-1 transition text-[10px] tracking-[0.18em] uppercase disabled:opacity-40",
+        error
+          ? "ring-[color:var(--clay)]/40 text-[color:var(--clay)] hover:ring-[color:var(--clay)]/70"
+          : "ring-border/70 text-muted-foreground hover:text-foreground hover:ring-border"
+      )}
+    >
+      {installing ? "…" : error ? "Retry" : (
+        <>
+          <Plus className="w-3 h-3" strokeWidth={1.8} />
+          Install
+        </>
+      )}
+    </button>
+  );
+  return (
+    <NavRow
+      title={plugin.name}
+      meta={plugin.category}
+      trailing={trailing}
+      onClick={onOpen}
+    />
+  );
+}
+
+// NavRow is a clickable row that navigates elsewhere (vs ExpandableRow
+// which toggles inline content). Trailing actions stopPropagation so
+// they don't trigger the row's onClick.
+function NavRow({
+  title,
+  suffix,
+  meta,
+  trailing,
+  onClick,
+}: {
+  title: string;
+  suffix?: React.ReactNode;
+  meta?: string | null;
+  trailing?: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      className="group cursor-pointer flex items-start gap-3 py-3"
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[13px] font-medium text-foreground truncate">
+            {title}
+          </span>
+          {suffix}
+        </div>
+        {meta && (
+          <div className="mt-0.5 text-[10px] text-muted-foreground font-mono truncate">
+            {meta}
+          </div>
+        )}
+      </div>
+      {trailing}
+      <ChevronRight
+        className="shrink-0 mt-1 text-muted-foreground/70 opacity-0 group-hover:opacity-100 transition-opacity"
+        size={13}
+        strokeWidth={1.8}
+      />
+    </div>
+  );
+}
+
+// ExpandableRow is the shared progressive-disclosure primitive: a title
+// row (optional meta line below), a chevron that rotates on expand, and
+// a body that appears on click. Trailing action (e.g. Install button)
+// stays clickable without toggling the row.
+function ExpandableRow({
+  title,
+  suffix,
+  meta,
+  trailing,
+  expandable,
+  children,
+}: {
+  title: string;
+  suffix?: React.ReactNode;
+  meta?: string | null;
+  trailing?: React.ReactNode;
+  expandable: boolean;
+  children?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const interactive = expandable;
+  return (
+    <div>
+      <div
+        role={interactive ? "button" : undefined}
+        tabIndex={interactive ? 0 : undefined}
+        onClick={() => interactive && setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (!interactive) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((o) => !o);
+          }
+        }}
+        className={cn(
+          "flex items-start gap-3 py-3",
+          interactive && "cursor-pointer group"
+        )}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[13px] font-medium text-foreground truncate">
+              {title}
+            </span>
+            {suffix}
+          </div>
+          {meta && (
+            <div className="mt-0.5 text-[10px] text-muted-foreground font-mono truncate">
+              {meta}
+            </div>
+          )}
+        </div>
+        {trailing}
+        {interactive && (
+          <ChevronRight
+            className={cn(
+              "shrink-0 mt-1 text-muted-foreground/70 transition-[transform,opacity] duration-150",
+              open
+                ? "rotate-90 opacity-100"
+                : "opacity-0 group-hover:opacity-100"
+            )}
+            size={13}
+            strokeWidth={1.8}
+          />
+        )}
+      </div>
+      {open && children && (
+        <div className="pb-3 pr-6">{children}</div>
+      )}
+    </div>
+  );
+}
+
+// summarizeInstallError trims the noisiest bits off the claude CLI's error
+// text so the inline message reads as a sentence, not a stack dump.
+function summarizeInstallError(raw: string): string {
+  const s = raw.replace(/^install:\s*/, "").replace(/^exit status \d+\s*—\s*/, "");
+  // Claude prints the failure line after "✘ Failed to install plugin X:"
+  const m = s.match(/Failed to install plugin[^:]*:\s*([\s\S]*)/);
+  const body = m ? m[1] : s;
+  // Keep just the first meaningful line, clip to something readable.
+  const first = body.split("\n").map((l) => l.trim()).filter(Boolean)[0] ?? body;
+  return first.length > 200 ? first.slice(0, 200) + "…" : first;
+}
+
+function Section({
+  icon: Icon,
+  label,
+  count,
+  children,
+}: {
+  icon: typeof Workflow;
+  label: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-4">
+        <Icon
+          className="text-muted-foreground"
+          size={13}
+          strokeWidth={1.8}
+        />
+        <span className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+          {label}
+        </span>
+        {typeof count === "number" && (
+          <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
+            · {count}
+          </span>
+        )}
+      </div>
+      <div className="divide-y divide-border/40">{children}</div>
+    </section>
+  );
+}
+
+function SkillRow({ skill }: { skill: Skill }) {
+  return (
+    <ExpandableRow
+      title={skill.name}
+      suffix={
+        !skill.enabled ? (
+          <span className="text-[9px] tracking-[0.22em] uppercase text-muted-foreground">
+            disabled
+          </span>
+        ) : null
+      }
+      expandable={!!skill.description}
+    >
+      {skill.description && (
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          {skill.description}
+        </p>
+      )}
+    </ExpandableRow>
+  );
+}
+
+function NamedRow({ item }: { item: NamedMD }) {
+  return (
+    <ExpandableRow title={item.name} expandable={!!item.description}>
+      {item.description && (
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          {item.description}
+        </p>
+      )}
+    </ExpandableRow>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// ─── artifact panel ──────────────────────────────────────────────
+//
+// Each orchestrator can have artifacts: small Vite + React + Tailwind
+// apps the orch scaffolds via `roster artifact create`. fleetview's
+// backend lazily spawns the dev server; this panel shows the list +
+// a live iframe pointing at that server. Vite's HMR keeps the iframe
+// in sync automatically — no postMessage source-pushing needed.
+//
+// V2: a postMessage protocol (annotations on hover, error overlays,
+// resize requests) — reserved here as a stub so the iframe loader
+// stays compatible.
+
+function ArtifactNavButton({
+  agent,
+  open,
+  onToggle,
+}: {
+  agent: Agent;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const [hasAny, setHasAny] = useState(false);
+  const eligible = agent.kind === "orchestrator" || agent.kind === "worker";
+
+  useEffect(() => {
+    if (!eligible) return;
+    let cancelled = false;
+    fetch(`/api/agents/${agent.id}/artifacts`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: Artifact[]) => {
+        if (!cancelled) setHasAny(Array.isArray(d) && d.length > 0);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, eligible]);
+
+  if (!eligible || !hasAny) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={open ? "Hide artifact panel" : "Show artifact panel"}
+      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+    >
+      <span>Artifact</span>
+      <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
+    </button>
+  );
+}
+
+type Annotation = {
+  text: string;
+  source?: { fileName: string; lineNumber: number; columnNumber?: number };
+  label?: string;
+  html?: string;
+  url?: string;
+};
+
+function ArtifactPanel({
+  agent,
+  open,
+  onClose,
+}: {
+  agent: Agent | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<Artifact[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [serving, setServing] = useState<Record<string, Artifact>>({});
+  const [designOn, setDesignOn] = useState(false);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [sending, setSending] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  // Load list when opened or agent changes.
+  const refresh = useCallback(() => {
+    if (!agent) return;
+    fetch(`/api/agents/${agent.id}/artifacts`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: Artifact[]) => {
+        const list = Array.isArray(d) ? d : [];
+        setItems(list);
+        setSelectedId((cur) => cur ?? list[0]?.id ?? null);
+      })
+      .catch(() => {});
+  }, [agent?.id]);
+
+  useEffect(() => {
+    if (open && agent) refresh();
+  }, [open, agent?.id, refresh]);
+
+  // Reset selection when agent switches.
+  useEffect(() => {
+    setSelectedId(null);
+    setServing({});
+  }, [agent?.id]);
+
+  // When the panel opens with a selection, kick the dev server and
+  // poll until ready. The backend handles npm install + spawn idempotently.
+  useEffect(() => {
+    if (!open || !agent || !selectedId) return;
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const tick = async () => {
+      const r = await fetch(`/api/agents/${agent.id}/artifacts/${selectedId}/serve`, {
+        method: "POST",
+      }).catch(() => null);
+      if (cancelled || !r) return;
+      const d: Artifact = await r.json().catch(() => null as any);
+      if (cancelled || !d) return;
+      setServing((s) => ({ ...s, [selectedId]: d }));
+      if (d.status !== "ready" && d.status !== "crashed") {
+        timer = window.setTimeout(tick, 1500);
+      }
+    };
+    tick();
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [open, agent?.id, selectedId]);
+
+  // ── design mode + annotations ───────────────────────────────
+
+  // Stable ref so the message handler reads the freshest queue
+  // without re-binding the listener on every annotation change.
+  const annotationsRef = useRef<Annotation[]>([]);
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
+
+  // Push design-mode toggle into the iframe whenever it changes,
+  // and re-push when src/serving updates so a freshly-loaded iframe
+  // catches up to the current toggle state.
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: "fv:design", on: designOn },
+      "*",
+    );
+  }, [designOn, selectedId, serving]);
+
+  // Reset annotation queue + design mode when switching artifact / agent.
+  useEffect(() => {
+    setAnnotations([]);
+    setDesignOn(false);
+  }, [agent?.id, selectedId]);
+
+  const sendAll = useCallback(
+    async (queue?: Annotation[]) => {
+      const list = queue ?? annotationsRef.current;
+      if (!agent || list.length === 0) return;
+      const aid = selectedId ?? "(unknown)";
+      const lines = list.map((a, i) => {
+        const loc = a.source
+          ? `${a.source.fileName.replace(/^.*\/artifacts\/[^/]+\//, "")}:${a.source.lineNumber}`
+          : "(no source)";
+        return `${i + 1}. ${loc} · ${a.label ?? ""}\n   → ${a.text}`;
+      });
+      const message = `[UI feedback — artifact ${aid}]\n\n${lines.join("\n\n")}`;
+      setSending(true);
+      try {
+        await fetch(`/api/agents/${agent.id}/notify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, from: "ui" }),
+        });
+        setAnnotations([]);
+      } finally {
+        setSending(false);
+      }
+    },
+    [agent, selectedId],
+  );
+
+  // Listen for annotations posted from the iframe.
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      const msg = e.data;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "fv:annotation" && msg.payload) {
+        setAnnotations((arr) => {
+          const next = [...arr, msg.payload as Annotation];
+          if (msg.sendNow) {
+            // Defer one tick so React commits the new state first.
+            window.setTimeout(() => sendAll(next), 0);
+          }
+          return next;
+        });
+      }
+      if (msg.type === "fv:design-cancel") {
+        setDesignOn(false);
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [sendAll]);
+
+  const removeAnnotation = useCallback((idx: number) => {
+    setAnnotations((arr) => arr.filter((_, i) => i !== idx));
+  }, []);
+
+  const selected = items.find((a) => a.id === selectedId) ?? null;
+  const live = selectedId ? serving[selectedId] ?? selected : null;
+  const iframeSrc =
+    live && (live.status === "ready" || live.alive)
+      ? `http://127.0.0.1:${live.port}/`
+      : null;
+
+  return (
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-card h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[58%] max-w-[960px]" : "w-0 border-l-0"
+      )}
+    >
+      {open && (
+        <div className="h-full flex flex-col">
+          <div className="flex items-center justify-between px-6 pt-7 pb-3">
+            <DesignSwitch on={designOn} onToggle={() => setDesignOn((v) => !v)} />
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Close artifact panel"
+            >
+              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+            </button>
+          </div>
+
+          {items.length > 1 && (
+            <div className="px-6 pb-2 flex flex-wrap gap-1.5">
+              {items.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => setSelectedId(a.id)}
+                  className={cn(
+                    "text-[12px] px-2.5 py-1 rounded-full ring-1 transition-colors",
+                    a.id === selectedId
+                      ? "bg-foreground text-background ring-foreground"
+                      : "ring-border/70 text-muted-foreground hover:text-foreground"
+                  )}
+                  title={a.path}
+                >
+                  {a.title || a.id}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="flex-1 min-h-0 px-6 pt-2 pb-2">
+            <ArtifactFrame artifact={live} src={iframeSrc} iframeRef={iframeRef} />
+          </div>
+
+          {annotations.length > 0 && (
+            <AnnotationTray
+              annotations={annotations}
+              sending={sending}
+              onRemove={removeAnnotation}
+              onSend={() => sendAll()}
+              onClear={() => setAnnotations([])}
+            />
+          )}
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function DesignSwitch({
+  on,
+  onToggle,
+}: {
+  on: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onToggle}
+      title={on ? "Exit edit-design mode" : "Edit design — hover to highlight, click to comment"}
+      className="group flex items-center gap-2.5"
+    >
+      <Pencil
+        className={cn(
+          "w-3.5 h-3.5 transition-colors",
+          on ? "text-[var(--matcha)]" : "text-muted-foreground group-hover:text-foreground"
+        )}
+        strokeWidth={1.8}
+      />
+      <span
+        className={cn(
+          "text-[11px] font-medium tracking-[0.22em] uppercase transition-colors",
+          on ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+        )}
+      >
+        Edit Design
+      </span>
+      <span
+        className={cn(
+          "relative inline-block h-[18px] w-8 rounded-full transition-colors ring-1",
+          on
+            ? "bg-[var(--matcha)] ring-[var(--matcha)]"
+            : "bg-secondary ring-border/70 group-hover:ring-border"
+        )}
+        aria-hidden="true"
+      >
+        <span
+          className={cn(
+            "absolute top-[2px] h-[14px] w-[14px] rounded-full bg-background shadow-sm transition-[left] duration-150 ease-out",
+            on ? "left-[16px]" : "left-[2px]"
+          )}
+        />
+      </span>
+    </button>
+  );
+}
+
+function AnnotationTray({
+  annotations,
+  sending,
+  onRemove,
+  onSend,
+  onClear,
+}: {
+  annotations: Annotation[];
+  sending: boolean;
+  onRemove: (idx: number) => void;
+  onSend: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="px-6 pb-6 pt-1">
+      <div className="rounded-2xl ring-1 ring-border/60 bg-background overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border/50">
+          <MousePointerClick className="w-3.5 h-3.5 text-[var(--matcha)]" strokeWidth={1.8} />
+          <span className="text-[12px] font-medium text-foreground">
+            {annotations.length} {annotations.length === 1 ? "comment" : "comments"}
+          </span>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            disabled={sending}
+            onClick={onSend}
+            className="flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-1.5 rounded-full bg-foreground text-background hover:bg-foreground/85 transition-colors disabled:opacity-50"
+          >
+            {sending ? (
+              <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+            ) : (
+              <Send className="w-3 h-3" strokeWidth={1.8} />
+            )}
+            <span>Send all</span>
+          </button>
+        </div>
+        <ul className="max-h-40 overflow-y-auto scrollbar-calm">
+          {annotations.map((a, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-3 px-4 py-2 hover:bg-secondary/40 group"
+            >
+              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground pt-0.5">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[12px] text-foreground truncate">{a.text}</div>
+                {a.label && (
+                  <div className="text-[11px] text-muted-foreground truncate">
+                    {a.source
+                      ? `${a.source.fileName.replace(/^.*\/artifacts\/[^/]+\//, "")}:${a.source.lineNumber} · ${a.label}`
+                      : a.label}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                title="Remove"
+                className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+              >
+                <XIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function ArtifactFrame({
+  artifact,
+  src,
+  iframeRef,
+}: {
+  artifact: Artifact | null;
+  src: string | null;
+  iframeRef?: React.Ref<HTMLIFrameElement>;
+}) {
+  if (!artifact) {
+    return (
+      <div className="h-full flex items-center justify-center text-sm italic text-muted-foreground rounded-2xl ring-1 ring-border/60 bg-background">
+        no artifact selected
+      </div>
+    );
+  }
+  if (!src) {
+    const label =
+      artifact.status === "installing"
+        ? "Installing dependencies…"
+        : artifact.status === "starting"
+          ? "Starting Vite…"
+          : artifact.status === "crashed"
+            ? `Crashed${artifact.error ? `: ${artifact.error}` : ""}`
+            : "Idle";
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground rounded-2xl ring-1 ring-border/60 bg-background">
+        {artifact.status === "installing" || artifact.status === "starting" ? (
+          <Loader2 className="w-5 h-5 animate-spin" strokeWidth={1.8} />
+        ) : null}
+        <span>{label}</span>
+        {artifact.error && <span className="text-xs px-6 text-center">{artifact.error}</span>}
+      </div>
+    );
+  }
+  return (
+    <iframe
+      ref={iframeRef}
+      title={`artifact:${artifact.id}`}
+      src={src}
+      className="w-full h-full rounded-2xl ring-1 ring-border/60 bg-background"
+      allow="cross-origin-isolated"
+    />
+  );
+}
+
+// ─── schedules panel ─────────────────────────────────────────────
+//
+// CRUD UI for the orch's <CLAUDE_CONFIG_DIR>/scheduled_tasks.json.
+// Claude Code reads that file natively and fires the prompts when
+// the cron matches; this panel just lets the user inspect and
+// curate the durable jobs through the dashboard. Frequency picker
+// adapted from superbot3's SchedulesTab — covers minutes / hourly /
+// daily / weekdays / weekly with a few common time slots.
+
+function SchedulesNavButton({
+  agent,
+  open,
+  onToggle,
+}: {
+  agent: Agent;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const eligible = agent.kind === "orchestrator" || agent.kind === "worker";
+  if (!eligible) return null;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={open ? "Hide schedules panel" : "Show schedules panel"}
+      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+    >
+      <span>Schedules</span>
+      <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.8} />
+    </button>
+  );
+}
+
+type Frequency = "minutes" | "hourly" | "daily" | "weekdays" | "weekly";
+
+const WEEKDAY_LABELS: { value: string; short: string }[] = [
+  { value: "1", short: "Mon" },
+  { value: "2", short: "Tue" },
+  { value: "3", short: "Wed" },
+  { value: "4", short: "Thu" },
+  { value: "5", short: "Fri" },
+  { value: "6", short: "Sat" },
+  { value: "0", short: "Sun" },
+];
+
+const MINUTE_OPTIONS = [5, 10, 15, 20, 30];
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => i);
+
+type ScheduleConfig = {
+  frequency: Frequency;
+  everyMinutes: number;
+  hour: number;
+  minute: number;
+  weekday: string;
+};
+
+const DEFAULT_SCHEDULE: ScheduleConfig = {
+  frequency: "daily",
+  everyMinutes: 15,
+  hour: 9,
+  minute: 0,
+  weekday: "1",
+};
+
+function configToCron(c: ScheduleConfig): string {
+  switch (c.frequency) {
+    case "minutes":
+      return `*/${c.everyMinutes} * * * *`;
+    case "hourly":
+      return `${c.minute} * * * *`;
+    case "daily":
+      return `${c.minute} ${c.hour} * * *`;
+    case "weekdays":
+      return `${c.minute} ${c.hour} * * 1-5`;
+    case "weekly":
+      return `${c.minute} ${c.hour} * * ${c.weekday}`;
+  }
+}
+
+function SchedulesPanel({
+  agent,
+  open,
+  onClose,
+}: {
+  agent: Agent | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<Schedule[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [draftPrompt, setDraftPrompt] = useState("");
+  const [draftCfg, setDraftCfg] = useState<ScheduleConfig>(DEFAULT_SCHEDULE);
+  const [creating, setCreating] = useState(false);
+
+  const eligible = !!agent && (agent.kind === "orchestrator" || agent.kind === "worker");
+
+  const refresh = useCallback(() => {
+    if (!agent || !eligible) return;
+    fetch(`/api/agents/${agent.id}/schedules`)
+      .then((r) => (r.ok ? r.json() : { tasks: [] }))
+      .then((d: { tasks: Schedule[] }) => setItems(d.tasks ?? []))
+      .catch(() => {});
+  }, [agent?.id, eligible]);
+
+  useEffect(() => {
+    if (open && agent) refresh();
+  }, [open, agent?.id, refresh]);
+
+  // Reset draft when switching agents.
+  useEffect(() => {
+    setDraftPrompt("");
+    setDraftCfg(DEFAULT_SCHEDULE);
+    setError(null);
+  }, [agent?.id]);
+
+  const create = useCallback(async () => {
+    if (!agent) return;
+    const prompt = draftPrompt.trim();
+    if (!prompt) {
+      setError("Prompt is required.");
+      return;
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agents/${agent.id}/schedules`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cron: configToCron(draftCfg),
+          prompt,
+          recurring: true,
+        }),
+      });
+      if (!r.ok) {
+        setError(await r.text());
+        return;
+      }
+      setDraftPrompt("");
+      setDraftCfg(DEFAULT_SCHEDULE);
+      refresh();
+    } finally {
+      setCreating(false);
+    }
+  }, [agent, draftPrompt, draftCfg, refresh]);
+
+  const remove = useCallback(
+    async (taskId: string) => {
+      if (!agent) return;
+      const r = await fetch(`/api/agents/${agent.id}/schedules/${taskId}`, {
+        method: "DELETE",
+      });
+      if (r.ok) refresh();
+    },
+    [agent?.id, refresh],
+  );
+
+  return (
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-card h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[420px] xl:w-[460px]" : "w-0 border-l-0"
+      )}
+    >
+      {open && (
+        <div className="h-full flex flex-col">
+          <div className="flex items-center justify-between px-6 pt-7 pb-3">
+            <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+              <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.8} />
+              <span>Schedules</span>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Close schedules panel"
+            >
+              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+            </button>
+          </div>
+
+          <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-6 pb-6">
+            {!eligible && (
+              <p className="text-sm italic text-muted-foreground py-6">
+                Schedules are per-orchestrator. Select an orchestrator (or worker) to manage them.
+              </p>
+            )}
+
+            {eligible && (
+              <>
+                {/* Existing schedules */}
+                <div className="space-y-2 mb-6">
+                  {items.length === 0 ? (
+                    <p className="text-sm italic text-muted-foreground py-2">No schedules yet.</p>
+                  ) : (
+                    items.map((t) => (
+                      <div
+                        key={t.id}
+                        className="group rounded-xl bg-background ring-1 ring-border/60 p-3 flex items-start gap-3"
+                      >
+                        <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" strokeWidth={1.8} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-medium text-foreground">
+                            {t.humanCron || t.cron}
+                          </div>
+                          <div className="text-[12px] text-muted-foreground mt-0.5 line-clamp-3">
+                            {t.prompt}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5 text-[10px] tracking-wide text-muted-foreground/80 font-mono">
+                            <span>{t.cron}</span>
+                            {!t.recurring && <span>· once</span>}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => remove(t.id)}
+                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                          title="Delete schedule"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Builder */}
+                <div className="rounded-xl bg-background ring-1 ring-border/60 p-3.5 space-y-3">
+                  <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+                    New schedule
+                  </div>
+
+                  <FrequencyPicker config={draftCfg} onChange={setDraftCfg} />
+
+                  <div>
+                    <label className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground block mb-1">
+                      Prompt
+                    </label>
+                    <textarea
+                      className="w-full resize-none bg-background ring-1 ring-border/70 focus:ring-foreground/40 outline-none rounded-lg px-3 py-2 text-[13px] leading-relaxed min-h-[72px]"
+                      placeholder="What should the orch do when this fires?"
+                      value={draftPrompt}
+                      onChange={(e) => setDraftPrompt(e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground font-mono">
+                      {configToCron(draftCfg)}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={creating || !draftPrompt.trim()}
+                      onClick={create}
+                      className="flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-1.5 rounded-full bg-foreground text-background hover:bg-foreground/85 transition-colors disabled:opacity-50"
+                    >
+                      {creating ? (
+                        <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+                      ) : (
+                        <Plus className="w-3 h-3" strokeWidth={1.8} />
+                      )}
+                      <span>Add</span>
+                    </button>
+                  </div>
+
+                  {error && <div className="text-[11px] text-[var(--clay)]">{error}</div>}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function FrequencyPicker({
+  config,
+  onChange,
+}: {
+  config: ScheduleConfig;
+  onChange: (c: ScheduleConfig) => void;
+}) {
+  const showHour = config.frequency === "daily" || config.frequency === "weekdays" || config.frequency === "weekly";
+  const showWeekday = config.frequency === "weekly";
+  const showEveryMin = config.frequency === "minutes";
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground block mb-1.5">
+          Frequency
+        </label>
+        <div className="flex flex-wrap gap-1.5">
+          {(
+            [
+              ["minutes", "Minutes"],
+              ["hourly", "Hourly"],
+              ["daily", "Daily"],
+              ["weekdays", "Weekdays"],
+              ["weekly", "Weekly"],
+            ] as [Frequency, string][]
+          ).map(([val, label]) => (
+            <button
+              key={val}
+              type="button"
+              onClick={() => onChange({ ...config, frequency: val })}
+              className={cn(
+                "text-[11px] tracking-[0.16em] uppercase px-2.5 py-1 rounded-full ring-1 transition-colors",
+                config.frequency === val
+                  ? "bg-foreground text-background ring-foreground"
+                  : "ring-border/70 text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {showEveryMin && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">Every</span>
+          <select
+            value={config.everyMinutes}
+            onChange={(e) => onChange({ ...config, everyMinutes: parseInt(e.target.value, 10) })}
+            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+          >
+            {MINUTE_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <span className="text-[12px] text-muted-foreground">minutes</span>
+        </div>
+      )}
+
+      {config.frequency === "hourly" && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">At</span>
+          <select
+            value={config.minute}
+            onChange={(e) => onChange({ ...config, minute: parseInt(e.target.value, 10) })}
+            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+          >
+            {[0, 5, 10, 15, 20, 30, 45].map((m) => (
+              <option key={m} value={m}>
+                :{String(m).padStart(2, "0")}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {showHour && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">At</span>
+          <select
+            value={config.hour}
+            onChange={(e) => onChange({ ...config, hour: parseInt(e.target.value, 10) })}
+            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+          >
+            {HOUR_OPTIONS.map((h) => {
+              const display =
+                h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
+              return (
+                <option key={h} value={h}>
+                  {display}
+                </option>
+              );
+            })}
+          </select>
+          <select
+            value={config.minute}
+            onChange={(e) => onChange({ ...config, minute: parseInt(e.target.value, 10) })}
+            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+          >
+            {[0, 15, 30, 45].map((m) => (
+              <option key={m} value={m}>
+                :{String(m).padStart(2, "0")}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {showWeekday && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">On</span>
+          <div className="flex gap-1">
+            {WEEKDAY_LABELS.map((d) => (
+              <button
+                key={d.value}
+                type="button"
+                onClick={() => onChange({ ...config, weekday: d.value })}
+                className={cn(
+                  "text-[11px] px-2 py-1 rounded-md ring-1 transition-colors",
+                  config.weekday === d.value
+                    ? "bg-foreground text-background ring-foreground"
+                    : "ring-border/70 text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {d.short}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
