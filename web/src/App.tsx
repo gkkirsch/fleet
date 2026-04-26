@@ -982,10 +982,15 @@ function NotifyBox({
   const send = useCallback(async () => {
     const body = text.trim();
     if (!body && attachments.length === 0) return;
+    // Avoid leading whitespace on attachment lines: Claude Code's TUI
+    // treats `\n` followed by whitespace (or a `-`) as a paste-end
+    // heuristic during bracketed paste and drops everything after.
+    // Bare paths on their own lines pass through cleanly; the orch's
+    // Read tool handles each path the same way.
     const message =
       attachments.length === 0
         ? body
-        : `${body}${body ? "\n\n" : ""}attached:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`;
+        : `${body}${body ? "\n\n" : ""}attached:\n${attachments.map((a) => a.path).join("\n")}`;
     setSending(true);
     onSent(agentId);
     try {
