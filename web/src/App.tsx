@@ -731,11 +731,30 @@ function MessageRow({ m }: { m: Message }) {
   // Two sides: user on the right (our side), assistant/agent on the left.
   // Tool blocks render centered, inline, in a muted style.
   if (m.role === "user") {
+    const cleaned = cleanUserText(m.text || "");
+    const { stripped, paths } = extractAttachments(cleaned);
+    const hasText = stripped.trim().length > 0;
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-[20px] rounded-br-md px-5 py-3 bg-secondary text-foreground text-[15px] leading-relaxed break-words">
-          <Markdown tone="light">{cleanUserText(m.text || "")}</Markdown>
-        </div>
+      <div className="flex flex-col items-end gap-1.5">
+        {paths.length > 0 && (
+          <div className="max-w-[78%] flex flex-wrap gap-1.5 justify-end">
+            {paths.map((p, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1.5 max-w-[260px] text-[12px] px-2 py-1 rounded-full bg-card text-foreground ring-1 ring-border/70"
+                title={p}
+              >
+                <Paperclip className="w-3 h-3 shrink-0 text-muted-foreground" strokeWidth={1.8} />
+                <span className="truncate">{attachmentDisplayName(p)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {hasText && (
+          <div className="max-w-[78%] rounded-[20px] rounded-br-md px-5 py-3 bg-secondary text-foreground text-[15px] leading-relaxed break-words">
+            <Markdown tone="light">{stripped}</Markdown>
+          </div>
+        )}
       </div>
     );
   }
@@ -913,6 +932,33 @@ const MARKDOWN_TONE = {
     tableBorder: "border border-background/20",
   },
 } as const;
+
+// Pull the trailing "attached:\n<path>\n<path>" block out of a user
+// message so it can render as chips above the bubble. Path lines are
+// expected to be absolute (start with /) — anything else is left in
+// the text.
+function extractAttachments(text: string): { stripped: string; paths: string[] } {
+  const m = text.match(/(\n*)attached:\n((?:\/[^\n]+\n?)+)\s*$/);
+  if (!m) return { stripped: text, paths: [] };
+  const paths = m[2]
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.startsWith("/"));
+  if (paths.length === 0) return { stripped: text, paths: [] };
+  const stripped = text.slice(0, m.index).replace(/\s+$/, "");
+  return { stripped, paths };
+}
+
+// Strip the on-disk timestamp + random suffix that the upload handler
+// prepends so the chip shows the original filename.
+//   20260426-010619-ec1cdb1d-Screenshot 2026-04-24 at 8.46.15 PM.jpg
+//   →                       Screenshot 2026-04-24 at 8.46.15 PM.jpg
+function attachmentDisplayName(p: string): string {
+  const slash = p.lastIndexOf("/");
+  const base = slash < 0 ? p : p.slice(slash + 1);
+  const m = base.match(/^\d{8}-\d{6}-[a-f0-9]+-(.+)$/);
+  return m ? m[1] : base;
+}
 
 function cleanUserText(text?: string): string {
   if (!text) return "";
