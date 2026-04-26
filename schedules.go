@@ -241,6 +241,20 @@ func cronToHuman(cron string) string {
 	}
 	minute, hour, dom, mon, dow := parts[0], parts[1], parts[2], parts[3], parts[4]
 
+	// One-shot date-locked: M H DoM Mon * (single numeric day + month).
+	// Render as "Apr 26 at 5:00 PM" so the user sees when it fires.
+	if reAllDigits.MatchString(minute) && reAllDigits.MatchString(hour) &&
+		reAllDigits.MatchString(dom) && reAllDigits.MatchString(mon) && dow == "*" {
+		mm, _ := strconv.Atoi(minute)
+		hh, _ := strconv.Atoi(hour)
+		d, _ := strconv.Atoi(dom)
+		mo, _ := strconv.Atoi(mon)
+		if mo >= 1 && mo <= 12 {
+			month := time.Month(mo)
+			return fmt.Sprintf("%s %d at %s", month.String()[:3], d, formatLocalTime(hh, mm))
+		}
+	}
+
 	// */N * * * *
 	if m := reEveryNMin.FindStringSubmatch(minute); m != nil &&
 		hour == "*" && dom == "*" && mon == "*" && dow == "*" {

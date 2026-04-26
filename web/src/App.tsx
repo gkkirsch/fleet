@@ -2693,7 +2693,9 @@ function SchedulesNavButton({
   );
 }
 
-type Frequency = "minutes" | "hourly" | "daily" | "weekdays" | "weekly";
+type Frequency = "minutes" | "hourly" | "daily" | "weekdays" | "weekly" | "once";
+
+type SchedulesRoute = { kind: "list" } | { kind: "create" };
 
 const WEEKDAY_LABELS: { value: string; short: string }[] = [
   { value: "1", short: "Mon" },
@@ -2708,35 +2710,67 @@ const WEEKDAY_LABELS: { value: string; short: string }[] = [
 const MINUTE_OPTIONS = [5, 10, 15, 20, 30];
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => i);
 
+type TimeSlot = { hour: number; minute: number };
+
 type ScheduleConfig = {
   frequency: Frequency;
   everyMinutes: number;
-  hour: number;
-  minute: number;
+  // For daily / weekdays / weekly: one or more times of day (must
+  // share the same minute — cron's minute field can't be a list when
+  // the hour field is a list).
+  times: TimeSlot[];
   weekday: string;
+  // For "once": absolute local datetime (date + time).
+  onceDate: string; // YYYY-MM-DD
+  onceTime: string; // HH:MM (24h)
 };
+
+function todayLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 const DEFAULT_SCHEDULE: ScheduleConfig = {
   frequency: "daily",
   everyMinutes: 15,
-  hour: 9,
-  minute: 0,
+  times: [{ hour: 9, minute: 0 }],
   weekday: "1",
+  onceDate: todayLocal(),
+  onceTime: "17:00",
 };
 
 function configToCron(c: ScheduleConfig): string {
+  const sorted = [...c.times].sort((a, b) => a.hour - b.hour || a.minute - b.minute);
+  const minute = sorted[0]?.minute ?? 0;
+  const hours = sorted.map((t) => t.hour).join(",");
   switch (c.frequency) {
     case "minutes":
       return `*/${c.everyMinutes} * * * *`;
     case "hourly":
-      return `${c.minute} * * * *`;
+      return `${minute} * * * *`;
     case "daily":
-      return `${c.minute} ${c.hour} * * *`;
+      return `${minute} ${hours} * * *`;
     case "weekdays":
-      return `${c.minute} ${c.hour} * * 1-5`;
+      return `${minute} ${hours} * * 1-5`;
     case "weekly":
-      return `${c.minute} ${c.hour} * * ${c.weekday}`;
+      return `${minute} ${hours} * * ${c.weekday}`;
+    case "once": {
+      const d = parseOnceDate(c.onceDate, c.onceTime);
+      if (!d) return "";
+      return `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`;
+    }
   }
+}
+
+function parseOnceDate(date: string, time: string): Date | null {
+  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const t = time.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m || !t) return null;
+  const [, y, mo, da] = m;
+  const [, h, mi] = t;
+  const d = new Date(+y, +mo - 1, +da, +h, +mi, 0, 0);
+  if (isNaN(d.getTime())) return null;
+  return d;
 }
 
 function SchedulesPanel({
@@ -2749,10 +2783,7 @@ function SchedulesPanel({
   onClose: () => void;
 }) {
   const [items, setItems] = useState<Schedule[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [draftPrompt, setDraftPrompt] = useState("");
-  const [draftCfg, setDraftCfg] = useState<ScheduleConfig>(DEFAULT_SCHEDULE);
-  const [creating, setCreating] = useState(false);
+  const [route, setRoute] = useState<SchedulesRoute>({ kind: "list" });
 
   const eligible = !!agent && (agent.kind === "orchestrator" || agent.kind === "worker");
 
@@ -2768,43 +2799,13 @@ function SchedulesPanel({
     if (open && agent) refresh();
   }, [open, agent?.id, refresh]);
 
-  // Reset draft when switching agents.
+  // Reset to list view + clear data when switching agents or closing.
   useEffect(() => {
-    setDraftPrompt("");
-    setDraftCfg(DEFAULT_SCHEDULE);
-    setError(null);
+    setRoute({ kind: "list" });
   }, [agent?.id]);
-
-  const create = useCallback(async () => {
-    if (!agent) return;
-    const prompt = draftPrompt.trim();
-    if (!prompt) {
-      setError("Prompt is required.");
-      return;
-    }
-    setCreating(true);
-    setError(null);
-    try {
-      const r = await fetch(`/api/agents/${agent.id}/schedules`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cron: configToCron(draftCfg),
-          prompt,
-          recurring: true,
-        }),
-      });
-      if (!r.ok) {
-        setError(await r.text());
-        return;
-      }
-      setDraftPrompt("");
-      setDraftCfg(DEFAULT_SCHEDULE);
-      refresh();
-    } finally {
-      setCreating(false);
-    }
-  }, [agent, draftPrompt, draftCfg, refresh]);
+  useEffect(() => {
+    if (!open) setRoute({ kind: "list" });
+  }, [open]);
 
   const remove = useCallback(
     async (taskId: string) => {
@@ -2817,6 +2818,11 @@ function SchedulesPanel({
     [agent?.id, refresh],
   );
 
+  const onCreated = useCallback(() => {
+    refresh();
+    setRoute({ kind: "list" });
+  }, [refresh]);
+
   return (
     <aside
       className={cn(
@@ -2828,8 +2834,22 @@ function SchedulesPanel({
         <div className="h-full flex flex-col">
           <div className="flex items-center justify-between px-6 pt-7 pb-3">
             <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-              <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.8} />
-              <span>Schedules</span>
+              {route.kind === "create" ? (
+                <button
+                  type="button"
+                  onClick={() => setRoute({ kind: "list" })}
+                  className="flex items-center gap-2 hover:text-foreground transition-colors"
+                  title="Back to schedules"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.8} />
+                  <span>New schedule</span>
+                </button>
+              ) : (
+                <>
+                  <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.8} />
+                  <span>Schedules</span>
+                </>
+              )}
             </div>
             <button
               type="button"
@@ -2841,99 +2861,192 @@ function SchedulesPanel({
             </button>
           </div>
 
-          <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-6 pb-6">
-            {!eligible && (
-              <p className="text-sm italic text-muted-foreground py-6">
-                Schedules are per-orchestrator. Select an orchestrator (or worker) to manage them.
-              </p>
-            )}
+          {!eligible && (
+            <p className="text-sm italic text-muted-foreground px-6 py-6">
+              Schedules are per-orchestrator. Select an orchestrator (or worker) to manage them.
+            </p>
+          )}
 
-            {eligible && (
-              <>
-                {/* Existing schedules */}
-                <div className="space-y-2 mb-6">
-                  {items.length === 0 ? (
-                    <p className="text-sm italic text-muted-foreground py-2">No schedules yet.</p>
-                  ) : (
-                    items.map((t) => (
-                      <div
-                        key={t.id}
-                        className="group rounded-xl bg-background ring-1 ring-border/60 p-3 flex items-start gap-3"
-                      >
-                        <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" strokeWidth={1.8} />
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[13px] font-medium text-foreground">
-                            {t.humanCron || t.cron}
-                          </div>
-                          <div className="text-[12px] text-muted-foreground mt-0.5 line-clamp-3">
-                            {t.prompt}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1.5 text-[10px] tracking-wide text-muted-foreground/80 font-mono">
-                            <span>{t.cron}</span>
-                            {!t.recurring && <span>· once</span>}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => remove(t.id)}
-                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
-                          title="Delete schedule"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
+          {eligible && route.kind === "list" && (
+            <SchedulesListView
+              items={items}
+              onRemove={remove}
+              onAdd={() => setRoute({ kind: "create" })}
+            />
+          )}
 
-                {/* Builder */}
-                <div className="rounded-xl bg-background ring-1 ring-border/60 p-3.5 space-y-3">
-                  <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-                    New schedule
-                  </div>
-
-                  <FrequencyPicker config={draftCfg} onChange={setDraftCfg} />
-
-                  <div>
-                    <label className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground block mb-1">
-                      Prompt
-                    </label>
-                    <textarea
-                      className="w-full resize-none bg-background ring-1 ring-border/70 focus:ring-foreground/40 outline-none rounded-lg px-3 py-2 text-[13px] leading-relaxed min-h-[72px]"
-                      placeholder="What should the orch do when this fires?"
-                      value={draftPrompt}
-                      onChange={(e) => setDraftPrompt(e.target.value)}
-                      rows={3}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-muted-foreground font-mono">
-                      {configToCron(draftCfg)}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={creating || !draftPrompt.trim()}
-                      onClick={create}
-                      className="flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-1.5 rounded-full bg-foreground text-background hover:bg-foreground/85 transition-colors disabled:opacity-50"
-                    >
-                      {creating ? (
-                        <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
-                      ) : (
-                        <Plus className="w-3 h-3" strokeWidth={1.8} />
-                      )}
-                      <span>Add</span>
-                    </button>
-                  </div>
-
-                  {error && <div className="text-[11px] text-[var(--clay)]">{error}</div>}
-                </div>
-              </>
-            )}
-          </div>
+          {eligible && route.kind === "create" && agent && (
+            <SchedulesCreateView
+              agent={agent}
+              onCancel={() => setRoute({ kind: "list" })}
+              onCreated={onCreated}
+            />
+          )}
         </div>
       )}
     </aside>
+  );
+}
+
+function SchedulesListView({
+  items,
+  onRemove,
+  onAdd,
+}: {
+  items: Schedule[];
+  onRemove: (id: string) => void;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="px-6 pb-3">
+        <button
+          type="button"
+          onClick={onAdd}
+          className="w-full flex items-center justify-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-2 rounded-xl ring-1 ring-border/70 text-foreground hover:bg-secondary transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" strokeWidth={1.8} />
+          <span>Add new schedule</span>
+        </button>
+      </div>
+
+      <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-6 pb-6 space-y-2">
+        {items.length === 0 ? (
+          <p className="text-sm italic text-muted-foreground py-2">No schedules yet.</p>
+        ) : (
+          items.map((t) => (
+            <div
+              key={t.id}
+              className="group rounded-xl bg-background ring-1 ring-border/60 p-3 flex items-start gap-3"
+            >
+              <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" strokeWidth={1.8} />
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-medium text-foreground">
+                  {t.humanCron || t.cron}
+                </div>
+                <div className="text-[12px] text-muted-foreground mt-0.5 line-clamp-3">
+                  {t.prompt}
+                </div>
+                <div className="flex items-center gap-2 mt-1.5 text-[10px] tracking-wide text-muted-foreground/80 font-mono">
+                  <span>{t.cron}</span>
+                  {!t.recurring && <span>· once</span>}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemove(t.id)}
+                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                title="Delete schedule"
+              >
+                <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SchedulesCreateView({
+  agent,
+  onCancel,
+  onCreated,
+}: {
+  agent: Agent;
+  onCancel: () => void;
+  onCreated: () => void;
+}) {
+  const [draftPrompt, setDraftPrompt] = useState("");
+  const [draftCfg, setDraftCfg] = useState<ScheduleConfig>(DEFAULT_SCHEDULE);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const cron = configToCron(draftCfg);
+  const validCron = cron.length > 0 && !cron.includes("NaN");
+
+  const create = useCallback(async () => {
+    const prompt = draftPrompt.trim();
+    if (!prompt) {
+      setError("Prompt is required.");
+      return;
+    }
+    if (!validCron) {
+      setError("Pick a valid time before saving.");
+      return;
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agents/${agent.id}/schedules`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cron,
+          prompt,
+          // "Once" mode is one-shot; everything else is recurring.
+          recurring: draftCfg.frequency !== "once",
+        }),
+      });
+      if (!r.ok) {
+        setError(await r.text());
+        return;
+      }
+      onCreated();
+    } finally {
+      setCreating(false);
+    }
+  }, [agent.id, draftPrompt, draftCfg, cron, validCron, onCreated]);
+
+  return (
+    <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-6 pb-6">
+      <div className="space-y-4">
+        <FrequencyPicker config={draftCfg} onChange={setDraftCfg} />
+
+        <div>
+          <label className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground block mb-1">
+            Prompt
+          </label>
+          <textarea
+            className="w-full resize-none bg-background ring-1 ring-border/70 focus:ring-foreground/40 outline-none rounded-lg px-3 py-2 text-[13px] leading-relaxed min-h-[96px]"
+            placeholder="What should the orch do when this fires?"
+            value={draftPrompt}
+            onChange={(e) => setDraftPrompt(e.target.value)}
+            rows={4}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <span className="text-[11px] text-muted-foreground font-mono truncate">
+            {validCron ? cron : "—"}
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-1.5 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={creating || !draftPrompt.trim() || !validCron}
+              onClick={create}
+              className="flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-1.5 rounded-full bg-foreground text-background hover:bg-foreground/85 transition-colors disabled:opacity-50"
+            >
+              {creating ? (
+                <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+              ) : (
+                <Plus className="w-3 h-3" strokeWidth={1.8} />
+              )}
+              <span>Save</span>
+            </button>
+          </div>
+        </div>
+
+        {error && <div className="text-[11px] text-[var(--clay)]">{error}</div>}
+      </div>
+    </div>
   );
 }
 
@@ -2944,9 +3057,40 @@ function FrequencyPicker({
   config: ScheduleConfig;
   onChange: (c: ScheduleConfig) => void;
 }) {
-  const showHour = config.frequency === "daily" || config.frequency === "weekdays" || config.frequency === "weekly";
+  const supportsTimes =
+    config.frequency === "daily" ||
+    config.frequency === "weekdays" ||
+    config.frequency === "weekly";
   const showWeekday = config.frequency === "weekly";
   const showEveryMin = config.frequency === "minutes";
+  const showHourlyMinute = config.frequency === "hourly";
+  const showOnce = config.frequency === "once";
+
+  const sortedTimes = [...config.times].sort(
+    (a, b) => a.hour - b.hour || a.minute - b.minute,
+  );
+
+  function updateTime(idx: number, patch: Partial<TimeSlot>) {
+    const next = config.times.map((t, i) => (i === idx ? { ...t, ...patch } : t));
+    // Force shared minute across all slots so the cron stays valid.
+    if (patch.minute !== undefined) {
+      const m = patch.minute;
+      onChange({ ...config, times: next.map((t) => ({ ...t, minute: m })) });
+    } else {
+      onChange({ ...config, times: next });
+    }
+  }
+  function addTime() {
+    const last = sortedTimes[sortedTimes.length - 1];
+    const nextHour = last ? Math.min(last.hour + 2, 23) : 9;
+    const minute = config.times[0]?.minute ?? 0;
+    onChange({ ...config, times: [...config.times, { hour: nextHour, minute }] });
+  }
+  function removeTime(idx: number) {
+    if (config.times.length <= 1) return;
+    onChange({ ...config, times: config.times.filter((_, i) => i !== idx) });
+  }
+
   return (
     <div className="space-y-3">
       <div>
@@ -2956,6 +3100,7 @@ function FrequencyPicker({
         <div className="flex flex-wrap gap-1.5">
           {(
             [
+              ["once", "Once"],
               ["minutes", "Minutes"],
               ["hourly", "Hourly"],
               ["daily", "Daily"],
@@ -2998,12 +3143,17 @@ function FrequencyPicker({
         </div>
       )}
 
-      {config.frequency === "hourly" && (
+      {showHourlyMinute && (
         <div className="flex items-center gap-2">
           <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">At</span>
           <select
-            value={config.minute}
-            onChange={(e) => onChange({ ...config, minute: parseInt(e.target.value, 10) })}
+            value={config.times[0]?.minute ?? 0}
+            onChange={(e) =>
+              onChange({
+                ...config,
+                times: config.times.map((t) => ({ ...t, minute: parseInt(e.target.value, 10) })),
+              })
+            }
             className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
           >
             {[0, 5, 10, 15, 20, 30, 45].map((m) => (
@@ -3015,35 +3165,65 @@ function FrequencyPicker({
         </div>
       )}
 
-      {showHour && (
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">At</span>
-          <select
-            value={config.hour}
-            onChange={(e) => onChange({ ...config, hour: parseInt(e.target.value, 10) })}
-            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
-          >
-            {HOUR_OPTIONS.map((h) => {
-              const display =
-                h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
+      {supportsTimes && (
+        <div>
+          <div className="flex items-baseline justify-between mb-1.5">
+            <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">
+              Times
+            </span>
+            <button
+              type="button"
+              onClick={addTime}
+              className="text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+            >
+              + Add time
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {sortedTimes.map((t, i) => {
+              const idx = config.times.indexOf(t);
               return (
-                <option key={h} value={h}>
-                  {display}
-                </option>
+                <div key={i} className="flex items-center gap-2">
+                  <select
+                    value={t.hour}
+                    onChange={(e) =>
+                      updateTime(idx, { hour: parseInt(e.target.value, 10) })
+                    }
+                    className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+                  >
+                    {HOUR_OPTIONS.map((h) => (
+                      <option key={h} value={h}>
+                        {formatHourLabel(h)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={t.minute}
+                    onChange={(e) =>
+                      updateTime(idx, { minute: parseInt(e.target.value, 10) })
+                    }
+                    className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+                  >
+                    {[0, 15, 30, 45].map((m) => (
+                      <option key={m} value={m}>
+                        :{String(m).padStart(2, "0")}
+                      </option>
+                    ))}
+                  </select>
+                  {config.times.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeTime(idx)}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                      title="Remove time"
+                    >
+                      <XIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
+                    </button>
+                  )}
+                </div>
               );
             })}
-          </select>
-          <select
-            value={config.minute}
-            onChange={(e) => onChange({ ...config, minute: parseInt(e.target.value, 10) })}
-            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
-          >
-            {[0, 15, 30, 45].map((m) => (
-              <option key={m} value={m}>
-                :{String(m).padStart(2, "0")}
-              </option>
-            ))}
-          </select>
+          </div>
         </div>
       )}
 
@@ -3069,6 +3249,39 @@ function FrequencyPicker({
           </div>
         </div>
       )}
+
+      {showOnce && (
+        <div>
+          <label className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground block mb-1.5">
+            When (local time)
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={config.onceDate}
+              onChange={(e) => onChange({ ...config, onceDate: e.target.value })}
+              min={todayLocal()}
+              className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+            />
+            <input
+              type="time"
+              value={config.onceTime}
+              onChange={(e) => onChange({ ...config, onceTime: e.target.value })}
+              className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+            />
+          </div>
+          <p className="text-[10.5px] text-muted-foreground mt-1.5 leading-snug">
+            Auto-deletes after firing.
+          </p>
+        </div>
+      )}
     </div>
   );
+}
+
+function formatHourLabel(h: number): string {
+  if (h === 0) return "12 AM";
+  if (h < 12) return `${h} AM`;
+  if (h === 12) return "12 PM";
+  return `${h - 12} PM`;
 }
