@@ -1059,9 +1059,9 @@ function NotifyBox({
               )}
             </div>
           )}
-          <div className="flex items-center gap-2 pr-2">
+          <div className="flex items-end gap-2 pr-2 pb-2">
             <textarea
-              className="flex-1 resize-none bg-transparent outline-none px-5 py-3.5 text-[15px] leading-relaxed min-h-[56px] placeholder:text-muted-foreground/70"
+              className="flex-1 resize-none bg-transparent outline-none px-5 py-4 text-[15px] leading-relaxed min-h-[112px] placeholder:text-muted-foreground/70"
               placeholder={dragOver ? "Drop files to attach" : "Write here"}
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -1075,7 +1075,7 @@ function NotifyBox({
                 }
               }}
               disabled={sending}
-              rows={1}
+              rows={3}
             />
             <button
               type="button"
