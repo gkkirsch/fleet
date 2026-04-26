@@ -94,3 +94,13 @@ export interface Artifact {
   alive: boolean;
   error?: string;
 }
+
+export interface Schedule {
+  id: string;
+  cron: string;
+  prompt: string;
+  createdAt: number;
+  recurring: boolean;
+  permanent: boolean;
+  humanCron?: string;
+}

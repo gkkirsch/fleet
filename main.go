@@ -519,6 +519,10 @@ func router() http.Handler {
 				handleArtifacts(w, r, id, strings.TrimPrefix(sub, "artifacts"))
 				return
 			}
+			if strings.HasPrefix(sub, "schedules") {
+				handleSchedules(w, r, id, strings.TrimPrefix(sub, "schedules"))
+				return
+			}
 			http.Error(w, "unknown subresource", http.StatusNotFound)
 		}
 	})

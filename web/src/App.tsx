@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, Check, ChevronRight, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MessageCircle, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MessageCircle, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
-import type { Agent, Artifact, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Skill } from "./types";
+import type { Agent, Artifact, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Schedule, Skill } from "./types";
 
 const POLL_MS = 2000;
 const PANEL_STORAGE_KEY = "fleetview-thread-panel-open";
@@ -64,22 +64,55 @@ function useArtifactPanel() {
   };
 }
 
+const SCHEDULES_PANEL_STORAGE_KEY = "fleetview.schedulesPanel.open";
+
+function useSchedulesPanel() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(SCHEDULES_PANEL_STORAGE_KEY);
+    return v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(SCHEDULES_PANEL_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
+    close: useCallback(() => set(false), [set]),
+  };
+}
+
 export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const panel = useThreadPanel();
   const artifactPanel = useArtifactPanel();
+  const schedulesPanel = useSchedulesPanel();
   const sidebar = useFleetSidebar();
-  // Mutually-exclusive panels — opening one auto-closes the other.
+  // Mutually-exclusive panels — opening one auto-closes the others.
   const toggleSettings = useCallback(() => {
-    if (!panel.open) artifactPanel.close();
+    if (!panel.open) {
+      artifactPanel.close();
+      schedulesPanel.close();
+    }
     panel.toggle();
-  }, [panel, artifactPanel]);
+  }, [panel, artifactPanel, schedulesPanel]);
   const toggleArtifact = useCallback(() => {
-    if (!artifactPanel.open) panel.close();
+    if (!artifactPanel.open) {
+      panel.close();
+      schedulesPanel.close();
+    }
     artifactPanel.toggle();
-  }, [panel, artifactPanel]);
+  }, [panel, artifactPanel, schedulesPanel]);
+  const toggleSchedules = useCallback(() => {
+    if (!schedulesPanel.open) {
+      panel.close();
+      artifactPanel.close();
+    }
+    schedulesPanel.toggle();
+  }, [panel, artifactPanel, schedulesPanel]);
   // Map of agent id → timestamp of a just-sent message. Used to show the
   // thinking shimmer immediately, before backend polling catches up to the
   // agent entering "streaming" state. Cleared by the effect below.
@@ -180,6 +213,8 @@ export function App() {
           onTogglePanel={toggleSettings}
           artifactPanelOpen={artifactPanel.open}
           onToggleArtifactPanel={toggleArtifact}
+          schedulesPanelOpen={schedulesPanel.open}
+          onToggleSchedulesPanel={toggleSchedules}
           sidebarOpen={sidebar.open}
           onToggleSidebar={sidebar.toggle}
         />
@@ -192,6 +227,11 @@ export function App() {
         agent={selected}
         open={artifactPanel.open}
         onClose={artifactPanel.close}
+      />
+      <SchedulesPanel
+        agent={selected}
+        open={schedulesPanel.open}
+        onClose={schedulesPanel.close}
       />
     </div>
   );
@@ -453,6 +493,8 @@ function Detail({
   onTogglePanel,
   artifactPanelOpen,
   onToggleArtifactPanel,
+  schedulesPanelOpen,
+  onToggleSchedulesPanel,
   sidebarOpen,
   onToggleSidebar,
 }: {
@@ -464,6 +506,8 @@ function Detail({
   onTogglePanel: () => void;
   artifactPanelOpen: boolean;
   onToggleArtifactPanel: () => void;
+  schedulesPanelOpen: boolean;
+  onToggleSchedulesPanel: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }) {
@@ -476,6 +520,8 @@ function Detail({
           onTogglePanel={onTogglePanel}
           artifactPanelOpen={artifactPanelOpen}
           onToggleArtifactPanel={onToggleArtifactPanel}
+          schedulesPanelOpen={schedulesPanelOpen}
+          onToggleSchedulesPanel={onToggleSchedulesPanel}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={onToggleSidebar}
         />
@@ -493,6 +539,8 @@ function Detail({
         onTogglePanel={onTogglePanel}
         artifactPanelOpen={artifactPanelOpen}
         onToggleArtifactPanel={onToggleArtifactPanel}
+        schedulesPanelOpen={schedulesPanelOpen}
+        onToggleSchedulesPanel={onToggleSchedulesPanel}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={onToggleSidebar}
       />
@@ -508,6 +556,8 @@ function TopNav({
   onTogglePanel,
   artifactPanelOpen,
   onToggleArtifactPanel,
+  schedulesPanelOpen,
+  onToggleSchedulesPanel,
   sidebarOpen,
   onToggleSidebar,
 }: {
@@ -516,6 +566,8 @@ function TopNav({
   onTogglePanel: () => void;
   artifactPanelOpen: boolean;
   onToggleArtifactPanel: () => void;
+  schedulesPanelOpen: boolean;
+  onToggleSchedulesPanel: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }) {
@@ -532,17 +584,20 @@ function TopNav({
         <SidebarIcon className="w-4 h-4" strokeWidth={1.8} />
       </button>
       <div className="flex items-center justify-end gap-5">
-      {agent && <BrowserButton agent={agent} />}
-      {agent && <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />}
-      <button
-        type="button"
-        onClick={onTogglePanel}
-        title={panelOpen ? "Hide settings panel" : "Show settings panel"}
-        className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
-      >
-        <span>Settings</span>
-        <SettingsIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
-      </button>
+        {agent && <BrowserButton agent={agent} />}
+        {agent && <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />}
+        {agent && (
+          <SchedulesNavButton agent={agent} open={schedulesPanelOpen} onToggle={onToggleSchedulesPanel} />
+        )}
+        <button
+          type="button"
+          onClick={onTogglePanel}
+          title={panelOpen ? "Hide settings panel" : "Show settings panel"}
+          className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+        >
+          <span>Settings</span>
+          <SettingsIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
+        </button>
       </div>
     </div>
   );
@@ -2602,5 +2657,418 @@ function ArtifactFrame({
       className="w-full h-full rounded-2xl ring-1 ring-border/60 bg-background"
       allow="cross-origin-isolated"
     />
+  );
+}
+
+// ─── schedules panel ─────────────────────────────────────────────
+//
+// CRUD UI for the orch's <CLAUDE_CONFIG_DIR>/scheduled_tasks.json.
+// Claude Code reads that file natively and fires the prompts when
+// the cron matches; this panel just lets the user inspect and
+// curate the durable jobs through the dashboard. Frequency picker
+// adapted from superbot3's SchedulesTab — covers minutes / hourly /
+// daily / weekdays / weekly with a few common time slots.
+
+function SchedulesNavButton({
+  agent,
+  open,
+  onToggle,
+}: {
+  agent: Agent;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const eligible = agent.kind === "orchestrator" || agent.kind === "worker";
+  if (!eligible) return null;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={open ? "Hide schedules panel" : "Show schedules panel"}
+      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+    >
+      <span>Schedules</span>
+      <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.8} />
+    </button>
+  );
+}
+
+type Frequency = "minutes" | "hourly" | "daily" | "weekdays" | "weekly";
+
+const WEEKDAY_LABELS: { value: string; short: string }[] = [
+  { value: "1", short: "Mon" },
+  { value: "2", short: "Tue" },
+  { value: "3", short: "Wed" },
+  { value: "4", short: "Thu" },
+  { value: "5", short: "Fri" },
+  { value: "6", short: "Sat" },
+  { value: "0", short: "Sun" },
+];
+
+const MINUTE_OPTIONS = [5, 10, 15, 20, 30];
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => i);
+
+type ScheduleConfig = {
+  frequency: Frequency;
+  everyMinutes: number;
+  hour: number;
+  minute: number;
+  weekday: string;
+};
+
+const DEFAULT_SCHEDULE: ScheduleConfig = {
+  frequency: "daily",
+  everyMinutes: 15,
+  hour: 9,
+  minute: 0,
+  weekday: "1",
+};
+
+function configToCron(c: ScheduleConfig): string {
+  switch (c.frequency) {
+    case "minutes":
+      return `*/${c.everyMinutes} * * * *`;
+    case "hourly":
+      return `${c.minute} * * * *`;
+    case "daily":
+      return `${c.minute} ${c.hour} * * *`;
+    case "weekdays":
+      return `${c.minute} ${c.hour} * * 1-5`;
+    case "weekly":
+      return `${c.minute} ${c.hour} * * ${c.weekday}`;
+  }
+}
+
+function SchedulesPanel({
+  agent,
+  open,
+  onClose,
+}: {
+  agent: Agent | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<Schedule[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [draftPrompt, setDraftPrompt] = useState("");
+  const [draftCfg, setDraftCfg] = useState<ScheduleConfig>(DEFAULT_SCHEDULE);
+  const [creating, setCreating] = useState(false);
+
+  const eligible = !!agent && (agent.kind === "orchestrator" || agent.kind === "worker");
+
+  const refresh = useCallback(() => {
+    if (!agent || !eligible) return;
+    fetch(`/api/agents/${agent.id}/schedules`)
+      .then((r) => (r.ok ? r.json() : { tasks: [] }))
+      .then((d: { tasks: Schedule[] }) => setItems(d.tasks ?? []))
+      .catch(() => {});
+  }, [agent?.id, eligible]);
+
+  useEffect(() => {
+    if (open && agent) refresh();
+  }, [open, agent?.id, refresh]);
+
+  // Reset draft when switching agents.
+  useEffect(() => {
+    setDraftPrompt("");
+    setDraftCfg(DEFAULT_SCHEDULE);
+    setError(null);
+  }, [agent?.id]);
+
+  const create = useCallback(async () => {
+    if (!agent) return;
+    const prompt = draftPrompt.trim();
+    if (!prompt) {
+      setError("Prompt is required.");
+      return;
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agents/${agent.id}/schedules`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cron: configToCron(draftCfg),
+          prompt,
+          recurring: true,
+        }),
+      });
+      if (!r.ok) {
+        setError(await r.text());
+        return;
+      }
+      setDraftPrompt("");
+      setDraftCfg(DEFAULT_SCHEDULE);
+      refresh();
+    } finally {
+      setCreating(false);
+    }
+  }, [agent, draftPrompt, draftCfg, refresh]);
+
+  const remove = useCallback(
+    async (taskId: string) => {
+      if (!agent) return;
+      const r = await fetch(`/api/agents/${agent.id}/schedules/${taskId}`, {
+        method: "DELETE",
+      });
+      if (r.ok) refresh();
+    },
+    [agent?.id, refresh],
+  );
+
+  return (
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-card h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[420px] xl:w-[460px]" : "w-0 border-l-0"
+      )}
+    >
+      {open && (
+        <div className="h-full flex flex-col">
+          <div className="flex items-center justify-between px-6 pt-7 pb-3">
+            <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+              <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.8} />
+              <span>Schedules</span>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Close schedules panel"
+            >
+              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+            </button>
+          </div>
+
+          <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-6 pb-6">
+            {!eligible && (
+              <p className="text-sm italic text-muted-foreground py-6">
+                Schedules are per-orchestrator. Select an orchestrator (or worker) to manage them.
+              </p>
+            )}
+
+            {eligible && (
+              <>
+                {/* Existing schedules */}
+                <div className="space-y-2 mb-6">
+                  {items.length === 0 ? (
+                    <p className="text-sm italic text-muted-foreground py-2">No schedules yet.</p>
+                  ) : (
+                    items.map((t) => (
+                      <div
+                        key={t.id}
+                        className="group rounded-xl bg-background ring-1 ring-border/60 p-3 flex items-start gap-3"
+                      >
+                        <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" strokeWidth={1.8} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13px] font-medium text-foreground">
+                            {t.humanCron || t.cron}
+                          </div>
+                          <div className="text-[12px] text-muted-foreground mt-0.5 line-clamp-3">
+                            {t.prompt}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5 text-[10px] tracking-wide text-muted-foreground/80 font-mono">
+                            <span>{t.cron}</span>
+                            {!t.recurring && <span>· once</span>}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => remove(t.id)}
+                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                          title="Delete schedule"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Builder */}
+                <div className="rounded-xl bg-background ring-1 ring-border/60 p-3.5 space-y-3">
+                  <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+                    New schedule
+                  </div>
+
+                  <FrequencyPicker config={draftCfg} onChange={setDraftCfg} />
+
+                  <div>
+                    <label className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground block mb-1">
+                      Prompt
+                    </label>
+                    <textarea
+                      className="w-full resize-none bg-background ring-1 ring-border/70 focus:ring-foreground/40 outline-none rounded-lg px-3 py-2 text-[13px] leading-relaxed min-h-[72px]"
+                      placeholder="What should the orch do when this fires?"
+                      value={draftPrompt}
+                      onChange={(e) => setDraftPrompt(e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground font-mono">
+                      {configToCron(draftCfg)}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={creating || !draftPrompt.trim()}
+                      onClick={create}
+                      className="flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-1.5 rounded-full bg-foreground text-background hover:bg-foreground/85 transition-colors disabled:opacity-50"
+                    >
+                      {creating ? (
+                        <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+                      ) : (
+                        <Plus className="w-3 h-3" strokeWidth={1.8} />
+                      )}
+                      <span>Add</span>
+                    </button>
+                  </div>
+
+                  {error && <div className="text-[11px] text-[var(--clay)]">{error}</div>}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function FrequencyPicker({
+  config,
+  onChange,
+}: {
+  config: ScheduleConfig;
+  onChange: (c: ScheduleConfig) => void;
+}) {
+  const showHour = config.frequency === "daily" || config.frequency === "weekdays" || config.frequency === "weekly";
+  const showWeekday = config.frequency === "weekly";
+  const showEveryMin = config.frequency === "minutes";
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground block mb-1.5">
+          Frequency
+        </label>
+        <div className="flex flex-wrap gap-1.5">
+          {(
+            [
+              ["minutes", "Minutes"],
+              ["hourly", "Hourly"],
+              ["daily", "Daily"],
+              ["weekdays", "Weekdays"],
+              ["weekly", "Weekly"],
+            ] as [Frequency, string][]
+          ).map(([val, label]) => (
+            <button
+              key={val}
+              type="button"
+              onClick={() => onChange({ ...config, frequency: val })}
+              className={cn(
+                "text-[11px] tracking-[0.16em] uppercase px-2.5 py-1 rounded-full ring-1 transition-colors",
+                config.frequency === val
+                  ? "bg-foreground text-background ring-foreground"
+                  : "ring-border/70 text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {showEveryMin && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">Every</span>
+          <select
+            value={config.everyMinutes}
+            onChange={(e) => onChange({ ...config, everyMinutes: parseInt(e.target.value, 10) })}
+            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+          >
+            {MINUTE_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <span className="text-[12px] text-muted-foreground">minutes</span>
+        </div>
+      )}
+
+      {config.frequency === "hourly" && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">At</span>
+          <select
+            value={config.minute}
+            onChange={(e) => onChange({ ...config, minute: parseInt(e.target.value, 10) })}
+            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+          >
+            {[0, 5, 10, 15, 20, 30, 45].map((m) => (
+              <option key={m} value={m}>
+                :{String(m).padStart(2, "0")}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {showHour && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">At</span>
+          <select
+            value={config.hour}
+            onChange={(e) => onChange({ ...config, hour: parseInt(e.target.value, 10) })}
+            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+          >
+            {HOUR_OPTIONS.map((h) => {
+              const display =
+                h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
+              return (
+                <option key={h} value={h}>
+                  {display}
+                </option>
+              );
+            })}
+          </select>
+          <select
+            value={config.minute}
+            onChange={(e) => onChange({ ...config, minute: parseInt(e.target.value, 10) })}
+            className="bg-background ring-1 ring-border/70 rounded-md px-2 py-1 text-[12px]"
+          >
+            {[0, 15, 30, 45].map((m) => (
+              <option key={m} value={m}>
+                :{String(m).padStart(2, "0")}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {showWeekday && (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground">On</span>
+          <div className="flex gap-1">
+            {WEEKDAY_LABELS.map((d) => (
+              <button
+                key={d.value}
+                type="button"
+                onClick={() => onChange({ ...config, weekday: d.value })}
+                className={cn(
+                  "text-[11px] px-2 py-1 rounded-md ring-1 transition-colors",
+                  config.weekday === d.value
+                    ? "bg-foreground text-background ring-foreground"
+                    : "ring-border/70 text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {d.short}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
