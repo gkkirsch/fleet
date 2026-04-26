@@ -111,10 +111,10 @@ func enrich(tasks []Schedule) []Schedule {
 
 // --- HTTP -------------------------------------------------------------------
 
-// handleSchedules dispatches to list / create / delete.
+// handleSchedules dispatches to list / create / update / delete.
 //
-//	tail = "" → GET list, POST create
-//	tail = "/<id>" → DELETE one
+//	tail = ""      GET list, POST create
+//	tail = "/<id>" PATCH update, DELETE remove
 func handleSchedules(w http.ResponseWriter, r *http.Request, orchID, tail string) {
 	tail = strings.TrimPrefix(tail, "/")
 	if tail == "" {
@@ -128,11 +128,14 @@ func handleSchedules(w http.ResponseWriter, r *http.Request, orchID, tail string
 		}
 		return
 	}
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodDelete:
+		handleSchedulesDelete(w, orchID, tail)
+	case http.MethodPatch, http.MethodPut:
+		handleSchedulesUpdate(w, r, orchID, tail)
+	default:
 		http.Error(w, "method", http.StatusMethodNotAllowed)
-		return
 	}
-	handleSchedulesDelete(w, orchID, tail)
 }
 
 func handleSchedulesList(w http.ResponseWriter, orchID string) {
@@ -189,6 +192,63 @@ func handleSchedulesCreate(w http.ResponseWriter, r *http.Request, orchID string
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	t.HumanCron = cronToHuman(t.Cron)
+	writeJSON(w, t)
+}
+
+type updateScheduleReq struct {
+	Cron      *string `json:"cron,omitempty"`
+	Prompt    *string `json:"prompt,omitempty"`
+	Recurring *bool   `json:"recurring,omitempty"`
+}
+
+func handleSchedulesUpdate(w http.ResponseWriter, r *http.Request, orchID, taskID string) {
+	var body updateScheduleReq
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	path := schedulesPathFor(orchID)
+	sf, err := readScheduleFile(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	idx := -1
+	for i, t := range sf.Tasks {
+		if t.ID == taskID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		http.Error(w, "no such task", http.StatusNotFound)
+		return
+	}
+	if body.Cron != nil {
+		c := strings.TrimSpace(*body.Cron)
+		if c == "" {
+			http.Error(w, "cron cannot be empty", http.StatusBadRequest)
+			return
+		}
+		sf.Tasks[idx].Cron = c
+	}
+	if body.Prompt != nil {
+		p := strings.TrimSpace(*body.Prompt)
+		if p == "" {
+			http.Error(w, "prompt cannot be empty", http.StatusBadRequest)
+			return
+		}
+		sf.Tasks[idx].Prompt = p
+	}
+	if body.Recurring != nil {
+		sf.Tasks[idx].Recurring = *body.Recurring
+	}
+	if err := writeScheduleFile(path, sf); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	t := sf.Tasks[idx]
 	t.HumanCron = cronToHuman(t.Cron)
 	writeJSON(w, t)
 }

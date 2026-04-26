@@ -2695,7 +2695,48 @@ function SchedulesNavButton({
 
 type Frequency = "minutes" | "hourly" | "daily" | "weekdays" | "weekly" | "once";
 
-type SchedulesRoute = { kind: "list" } | { kind: "create" };
+type SchedulesRoute = { kind: "list" } | { kind: "create" } | { kind: "edit"; task: Schedule };
+
+// Best-effort: turn an existing cron + recurring flag back into a
+// ScheduleConfig the picker can show. Falls back to "raw" mode if
+// the cron doesn't match a shape we generate (the user can still
+// edit the prompt without losing the original cron).
+function cronToConfig(cron: string, recurring: boolean): ScheduleConfig | null {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [min, hour, dom, mon, dow] = parts;
+
+  // One-shot: M H D Mo *
+  if (!recurring && /^\d+$/.test(min) && /^\d+$/.test(hour) && /^\d+$/.test(dom) && /^\d+$/.test(mon) && dow === "*") {
+    const yyyy = new Date().getFullYear();
+    const date = `${yyyy}-${String(+mon).padStart(2, "0")}-${String(+dom).padStart(2, "0")}`;
+    const time = `${String(+hour).padStart(2, "0")}:${String(+min).padStart(2, "0")}`;
+    return { ...DEFAULT_SCHEDULE, frequency: "once", onceDate: date, onceTime: time };
+  }
+  // */N * * * *
+  const everyMin = min.match(/^\*\/(\d+)$/);
+  if (everyMin && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
+    return { ...DEFAULT_SCHEDULE, frequency: "minutes", everyMinutes: parseInt(everyMin[1], 10) };
+  }
+  // M * * * *
+  if (/^\d+$/.test(min) && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
+    return { ...DEFAULT_SCHEDULE, frequency: "hourly", times: [{ hour: 0, minute: parseInt(min, 10) }] };
+  }
+  if (!/^\d+$/.test(min) || !/^[\d,]+$/.test(hour)) return null;
+  const m = parseInt(min, 10);
+  const hours = hour.split(",").map((h) => parseInt(h, 10));
+  const times = hours.map((h) => ({ hour: h, minute: m }));
+  if (dom === "*" && mon === "*" && dow === "*") {
+    return { ...DEFAULT_SCHEDULE, frequency: "daily", times };
+  }
+  if (dom === "*" && mon === "*" && dow === "1-5") {
+    return { ...DEFAULT_SCHEDULE, frequency: "weekdays", times };
+  }
+  if (dom === "*" && mon === "*" && /^\d$/.test(dow)) {
+    return { ...DEFAULT_SCHEDULE, frequency: "weekly", times, weekday: dow };
+  }
+  return null;
+}
 
 const WEEKDAY_LABELS: { value: string; short: string }[] = [
   { value: "1", short: "Mon" },
@@ -2834,7 +2875,7 @@ function SchedulesPanel({
         <div className="h-full flex flex-col">
           <div className="flex items-center justify-between px-6 pt-7 pb-3">
             <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-              {route.kind === "create" ? (
+              {route.kind !== "list" ? (
                 <button
                   type="button"
                   onClick={() => setRoute({ kind: "list" })}
@@ -2842,7 +2883,7 @@ function SchedulesPanel({
                   title="Back to schedules"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.8} />
-                  <span>New schedule</span>
+                  <span>{route.kind === "edit" ? "Edit schedule" : "New schedule"}</span>
                 </button>
               ) : (
                 <>
@@ -2872,14 +2913,26 @@ function SchedulesPanel({
               items={items}
               onRemove={remove}
               onAdd={() => setRoute({ kind: "create" })}
+              onEdit={(task) => setRoute({ kind: "edit", task })}
             />
           )}
 
           {eligible && route.kind === "create" && agent && (
-            <SchedulesCreateView
+            <ScheduleFormView
               agent={agent}
+              mode="create"
               onCancel={() => setRoute({ kind: "list" })}
-              onCreated={onCreated}
+              onSaved={onCreated}
+            />
+          )}
+
+          {eligible && route.kind === "edit" && agent && (
+            <ScheduleFormView
+              agent={agent}
+              mode="edit"
+              task={route.task}
+              onCancel={() => setRoute({ kind: "list" })}
+              onSaved={onCreated}
             />
           )}
         </div>
@@ -2892,10 +2945,12 @@ function SchedulesListView({
   items,
   onRemove,
   onAdd,
+  onEdit,
 }: {
   items: Schedule[];
   onRemove: (id: string) => void;
   onAdd: () => void;
+  onEdit: (task: Schedule) => void;
 }) {
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -2915,9 +2970,11 @@ function SchedulesListView({
           <p className="text-sm italic text-muted-foreground py-2">No schedules yet.</p>
         ) : (
           items.map((t) => (
-            <div
+            <button
               key={t.id}
-              className="group rounded-xl bg-background ring-1 ring-border/60 p-3 flex items-start gap-3"
+              type="button"
+              onClick={() => onEdit(t)}
+              className="group w-full text-left rounded-xl bg-background ring-1 ring-border/60 hover:ring-border p-3 flex items-start gap-3 transition-colors"
             >
               <Clock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" strokeWidth={1.8} />
               <div className="flex-1 min-w-0">
@@ -2932,15 +2989,26 @@ function SchedulesListView({
                   {!t.recurring && <span>· once</span>}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => onRemove(t.id)}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(t.id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onRemove(t.id);
+                  }
+                }}
                 className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
                 title="Delete schedule"
               >
                 <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
-              </button>
-            </div>
+              </span>
+            </button>
           ))
         )}
       </div>
@@ -2948,24 +3016,33 @@ function SchedulesListView({
   );
 }
 
-function SchedulesCreateView({
+function ScheduleFormView({
   agent,
+  mode,
+  task,
   onCancel,
-  onCreated,
+  onSaved,
 }: {
   agent: Agent;
+  mode: "create" | "edit";
+  task?: Schedule;
   onCancel: () => void;
-  onCreated: () => void;
+  onSaved: () => void;
 }) {
-  const [draftPrompt, setDraftPrompt] = useState("");
-  const [draftCfg, setDraftCfg] = useState<ScheduleConfig>(DEFAULT_SCHEDULE);
-  const [creating, setCreating] = useState(false);
+  const [draftPrompt, setDraftPrompt] = useState(task?.prompt ?? "");
+  const [draftCfg, setDraftCfg] = useState<ScheduleConfig>(() => {
+    if (task) {
+      return cronToConfig(task.cron, task.recurring) ?? DEFAULT_SCHEDULE;
+    }
+    return DEFAULT_SCHEDULE;
+  });
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const cron = configToCron(draftCfg);
   const validCron = cron.length > 0 && !cron.includes("NaN");
 
-  const create = useCallback(async () => {
+  const save = useCallback(async () => {
     const prompt = draftPrompt.trim();
     if (!prompt) {
       setError("Prompt is required.");
@@ -2975,28 +3052,33 @@ function SchedulesCreateView({
       setError("Pick a valid time before saving.");
       return;
     }
-    setCreating(true);
+    setSaving(true);
     setError(null);
     try {
-      const r = await fetch(`/api/agents/${agent.id}/schedules`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cron,
-          prompt,
-          // "Once" mode is one-shot; everything else is recurring.
-          recurring: draftCfg.frequency !== "once",
-        }),
-      });
+      const recurring = draftCfg.frequency !== "once";
+      let r: Response;
+      if (mode === "edit" && task) {
+        r = await fetch(`/api/agents/${agent.id}/schedules/${task.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cron, prompt, recurring }),
+        });
+      } else {
+        r = await fetch(`/api/agents/${agent.id}/schedules`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cron, prompt, recurring }),
+        });
+      }
       if (!r.ok) {
         setError(await r.text());
         return;
       }
-      onCreated();
+      onSaved();
     } finally {
-      setCreating(false);
+      setSaving(false);
     }
-  }, [agent.id, draftPrompt, draftCfg, cron, validCron, onCreated]);
+  }, [agent.id, draftPrompt, draftCfg, cron, validCron, mode, task, onSaved]);
 
   return (
     <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-6 pb-6">
@@ -3030,16 +3112,18 @@ function SchedulesCreateView({
             </button>
             <button
               type="button"
-              disabled={creating || !draftPrompt.trim() || !validCron}
-              onClick={create}
+              disabled={saving || !draftPrompt.trim() || !validCron}
+              onClick={save}
               className="flex items-center gap-1.5 text-[11px] font-medium tracking-[0.22em] uppercase px-3 py-1.5 rounded-full bg-foreground text-background hover:bg-foreground/85 transition-colors disabled:opacity-50"
             >
-              {creating ? (
+              {saving ? (
                 <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+              ) : mode === "edit" ? (
+                <Check className="w-3 h-3" strokeWidth={1.8} />
               ) : (
                 <Plus className="w-3 h-3" strokeWidth={1.8} />
               )}
-              <span>Save</span>
+              <span>{mode === "edit" ? "Save" : "Save"}</span>
             </button>
           </div>
         </div>
