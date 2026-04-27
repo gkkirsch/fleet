@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -545,7 +545,11 @@ function Detail({
         onToggleSidebar={onToggleSidebar}
       />
       <MessageStream agent={agent} messages={messages} isPending={isPending} />
-      <NotifyBox agentId={agent.id} onSent={onSent} />
+      <NotifyBox
+        agentId={agent.id}
+        onSent={onSent}
+        agentBusy={agent.status === "streaming" || isPending}
+      />
     </section>
   );
 }
@@ -1120,16 +1124,28 @@ type Attachment = {
 function NotifyBox({
   agentId,
   onSent,
+  agentBusy,
 }: {
   agentId: string;
   onSent: (id: string) => void;
+  agentBusy: boolean;
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
   const [dragOver, setDragOver] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const interrupt = useCallback(async () => {
+    setInterrupting(true);
+    try {
+      await fetch(`/api/agents/${agentId}/interrupt`, { method: "POST" });
+    } finally {
+      setInterrupting(false);
+    }
+  }, [agentId]);
 
   const upload = useCallback(
     async (files: FileList | File[]) => {
@@ -1274,19 +1290,35 @@ function NotifyBox({
             >
               <Paperclip size={16} strokeWidth={1.8} />
             </button>
-            <button
-              type="button"
-              onClick={send}
-              disabled={!canSend}
-              title="send"
-              className="flex items-center justify-center h-10 w-10 rounded-xl bg-background ring-1 ring-border/70 hover:ring-border transition disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {sending || uploading > 0 ? (
-                <Loader2 className="text-muted-foreground animate-spin" size={16} strokeWidth={1.8} />
-              ) : (
-                <Send className="text-foreground" size={16} strokeWidth={1.8} />
-              )}
-            </button>
+            {agentBusy && !sending ? (
+              <button
+                type="button"
+                onClick={interrupt}
+                disabled={interrupting}
+                title="Stop the agent (sends Esc)"
+                className="flex items-center justify-center h-10 w-10 rounded-xl bg-foreground text-background ring-1 ring-foreground hover:bg-foreground/85 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {interrupting ? (
+                  <Loader2 className="animate-spin" size={16} strokeWidth={1.8} />
+                ) : (
+                  <Square size={12} strokeWidth={2.4} fill="currentColor" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={send}
+                disabled={!canSend}
+                title="Send"
+                className="flex items-center justify-center h-10 w-10 rounded-xl bg-background ring-1 ring-border/70 hover:ring-border transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {sending || uploading > 0 ? (
+                  <Loader2 className="text-muted-foreground animate-spin" size={16} strokeWidth={1.8} />
+                ) : (
+                  <ArrowUp className="text-foreground" size={18} strokeWidth={2.2} />
+                )}
+              </button>
+            )}
           </div>
           <input
             ref={fileInputRef}

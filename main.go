@@ -425,6 +425,50 @@ type notifyReq struct {
 	From    string `json:"from"`
 }
 
+// handleInterrupt sends a single Escape to the target's TUI (camux's
+// "interrupt" primitive). Used by the chat UI's stop button when the
+// agent is mid-stream. No request body — the agent id alone is the
+// target.
+func handleInterrupt(w http.ResponseWriter, r *http.Request, id string) {
+	a, err := loadAgentMerged(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if a == nil {
+		http.Error(w, "no such agent", http.StatusNotFound)
+		return
+	}
+	if a.Target == "" {
+		http.Error(w, "agent has no target (stopped?)", http.StatusBadRequest)
+		return
+	}
+	cmd := exec.Command(camuxBin, "interrupt", a.Target)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		http.Error(w, strings.TrimSpace(errb.String()), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "interrupted"})
+}
+
+// loadAgentMerged is a thin convenience wrapper around loadAllAgents +
+// id lookup. Callers that need just one agent shouldn't have to pull
+// the full fleet themselves.
+func loadAgentMerged(id string) (*Agent, error) {
+	all, err := loadAllAgents()
+	if err != nil {
+		return nil, err
+	}
+	for i := range all {
+		if all[i].ID == id {
+			return &all[i], nil
+		}
+	}
+	return nil, nil
+}
+
 func handleNotify(w http.ResponseWriter, r *http.Request, id string) {
 	var body notifyReq
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -508,6 +552,12 @@ func router() http.Handler {
 			handleCredentials(w, r, id)
 		case "browser":
 			handleBrowser(w, r, id)
+		case "interrupt":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			handleInterrupt(w, r, id)
 		case "upload":
 			if r.Method != http.MethodPost {
 				http.Error(w, "method", http.StatusMethodNotAllowed)
