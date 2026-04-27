@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -2537,6 +2537,17 @@ function ArtifactPanel({
           <div className="flex items-center justify-between px-6 pt-7 pb-3">
             <DesignSwitch on={designOn} onToggle={() => setDesignOn((v) => !v)} />
             <div className="flex items-center gap-3">
+              {iframeSrc && (
+                <a
+                  href={iframeSrc}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  title="Open in new tab"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" strokeWidth={1.8} />
+                </a>
+              )}
               <button
                 type="button"
                 onClick={() => setFullscreen((v) => !v)}
