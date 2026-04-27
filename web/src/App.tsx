@@ -684,6 +684,12 @@ function BrowserButton({ agent }: { agent: Agent }) {
 
 // ─── messages ────────────────────────────────────────────────────
 
+// How many recent turns to render initially. Each "Load earlier"
+// click reveals another batch of the same size. Long sessions
+// rehydrate ~hundreds of turns; rendering them all blew up scroll
+// height and made the bubble layout sluggish.
+const MESSAGE_PAGE_SIZE = 30;
+
 function MessageStream({
   agent,
   messages,
@@ -694,17 +700,41 @@ function MessageStream({
   isPending: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length]);
+  const [visibleCount, setVisibleCount] = useState(MESSAGE_PAGE_SIZE);
 
   // Only show the two conversation roles. Tool calls and their results
   // are hidden from the stream — when Claude is working, we surface a
   // shimmering verb pill instead. Thinking blocks are also filtered.
-  const filtered = messages.filter(
-    (m) => (m.role === "user" || m.role === "assistant") && !m.thinking
+  const filtered = useMemo(
+    () =>
+      messages.filter(
+        (m) => (m.role === "user" || m.role === "assistant") && !m.thinking
+      ),
+    [messages],
   );
+
+  // Reset paging whenever the agent (and therefore the message stream)
+  // changes — a new orch shouldn't inherit "I clicked load more 5
+  // times" state from the previous one.
+  useEffect(() => {
+    setVisibleCount(MESSAGE_PAGE_SIZE);
+  }, [agent.id]);
+
+  // Auto-scroll to bottom only when a new message arrives at the tail
+  // (i.e. the conversation grew). Don't fight the user when they
+  // expand earlier history with "Load earlier".
+  const lastLenRef = useRef(filtered.length);
+  useEffect(() => {
+    if (filtered.length > lastLenRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+    lastLenRef.current = filtered.length;
+  }, [filtered.length]);
+
   const isStreaming = agent.status === "streaming" || isPending;
+  const sliceStart = Math.max(0, filtered.length - visibleCount);
+  const visible = filtered.slice(sliceStart);
+  const hidden = filtered.length - visible.length;
 
   return (
     <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
@@ -730,8 +760,23 @@ function MessageStream({
           </div>
         ) : (
           <div className="space-y-4">
-            {filtered.map((m, i) => (
-              <MessageRow key={i} m={m} />
+            {hidden > 0 && (
+              <div className="flex justify-center pt-2 pb-4">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVisibleCount((c) =>
+                      Math.min(filtered.length, c + MESSAGE_PAGE_SIZE),
+                    )
+                  }
+                  className="text-[11px] font-medium tracking-[0.22em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Load earlier · {hidden} hidden
+                </button>
+              </div>
+            )}
+            {visible.map((m, i) => (
+              <MessageRow key={sliceStart + i} m={m} />
             ))}
             {isStreaming && <ThinkingRow agent={agent} />}
           </div>
