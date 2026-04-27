@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, MessageCircle, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -2331,6 +2331,7 @@ function ArtifactPanel({
   const [designOn, setDesignOn] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [sending, setSending] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   // Load list when opened or agent changes.
@@ -2406,7 +2407,18 @@ function ArtifactPanel({
   useEffect(() => {
     setAnnotations([]);
     setDesignOn(false);
+    setFullscreen(false);
   }, [agent?.id, selectedId]);
+
+  // Esc bails out of fullscreen.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
 
   const sendAll = useCallback(
     async (queue?: Annotation[]) => {
@@ -2473,21 +2485,45 @@ function ArtifactPanel({
     <aside
       className={cn(
         "shrink-0 border-l border-border/60 bg-card h-full overflow-hidden transition-[width] duration-200 ease-in-out",
-        open ? "w-[58%] max-w-[960px]" : "w-0 border-l-0"
+        // Fullscreen lifts the panel out of the flex row entirely:
+        // fixed-positioned, z-elevated, full viewport. The flex slot
+        // collapses to 0 so the chat column doesn't reflow under it.
+        fullscreen
+          ? "fixed inset-0 z-50 w-full max-w-none border-l-0"
+          : open
+            ? "w-[58%] max-w-[960px]"
+            : "w-0 border-l-0"
       )}
     >
       {open && (
         <div className="h-full flex flex-col">
           <div className="flex items-center justify-between px-6 pt-7 pb-3">
             <DesignSwitch on={designOn} onToggle={() => setDesignOn((v) => !v)} />
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              title="Close artifact panel"
-            >
-              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setFullscreen((v) => !v)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title={fullscreen ? "Exit fullscreen (Esc)" : "View fullscreen"}
+              >
+                {fullscreen ? (
+                  <Minimize2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                ) : (
+                  <Maximize2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFullscreen(false);
+                  onClose();
+                }}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title="Close artifact panel"
+              >
+                <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+              </button>
+            </div>
           </div>
 
           {items.length > 1 && (
