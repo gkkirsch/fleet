@@ -120,6 +120,14 @@ export function App() {
   const markPending = useCallback((id: string) => {
     setPendingSends((p) => ({ ...p, [id]: Date.now() }));
   }, []);
+  const clearPending = useCallback((id: string) => {
+    setPendingSends((p) => {
+      if (!(id in p)) return p;
+      const n = { ...p };
+      delete n[id];
+      return n;
+    });
+  }, []);
 
   useEffect(() => {
     let stop = false;
@@ -209,6 +217,7 @@ export function App() {
           messages={messages}
           isPending={isPending}
           onSent={markPending}
+          onInterrupted={clearPending}
           panelOpen={panel.open}
           onTogglePanel={toggleSettings}
           artifactPanelOpen={artifactPanel.open}
@@ -489,6 +498,7 @@ function Detail({
   messages,
   isPending,
   onSent,
+  onInterrupted,
   panelOpen,
   onTogglePanel,
   artifactPanelOpen,
@@ -502,6 +512,7 @@ function Detail({
   messages: Message[];
   isPending: boolean;
   onSent: (id: string) => void;
+  onInterrupted: (id: string) => void;
   panelOpen: boolean;
   onTogglePanel: () => void;
   artifactPanelOpen: boolean;
@@ -548,6 +559,7 @@ function Detail({
       <NotifyBox
         agentId={agent.id}
         onSent={onSent}
+        onInterrupted={onInterrupted}
         agentBusy={agent.status === "streaming" || isPending}
       />
     </section>
@@ -1124,10 +1136,12 @@ type Attachment = {
 function NotifyBox({
   agentId,
   onSent,
+  onInterrupted,
   agentBusy,
 }: {
   agentId: string;
   onSent: (id: string) => void;
+  onInterrupted: (id: string) => void;
   agentBusy: boolean;
 }) {
   const [text, setText] = useState("");
@@ -1142,10 +1156,14 @@ function NotifyBox({
     setInterrupting(true);
     try {
       await fetch(`/api/agents/${agentId}/interrupt`, { method: "POST" });
+      // Clear App-level pending flag so the send button comes back
+      // immediately. The fleet poll will catch the orch's status flip
+      // back to "ready" within ~POLL_MS.
+      onInterrupted(agentId);
     } finally {
       setInterrupting(false);
     }
-  }, [agentId]);
+  }, [agentId, onInterrupted]);
 
   const upload = useCallback(
     async (files: FileList | File[]) => {
