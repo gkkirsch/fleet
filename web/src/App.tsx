@@ -827,6 +827,43 @@ function displayName(a: Agent): string {
   return a.id;
 }
 
+// Anything past this many characters in a single message gets
+// clipped with a "Show more" toggle. Markdown-rendering a 50KB+
+// blob freezes the bubble layout — react-markdown traverses every
+// node every paint. The clip happens at the source string level so
+// react-markdown only ever sees the visible portion.
+const MAX_MESSAGE_CHARS = 4000;
+
+function ClippedMarkdown({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const overflow = text.length > MAX_MESSAGE_CHARS;
+  // When clipping, cut at the last newline so we don't slice through
+  // a sentence; falls back to a hard cut if no newline is near.
+  const visible = useMemo(() => {
+    if (!overflow || expanded) return text;
+    const slice = text.slice(0, MAX_MESSAGE_CHARS);
+    const lastNL = slice.lastIndexOf("\n");
+    return lastNL > MAX_MESSAGE_CHARS - 400 ? slice.slice(0, lastNL) : slice;
+  }, [text, overflow, expanded]);
+
+  return (
+    <>
+      <Markdown tone="light">{visible}</Markdown>
+      {overflow && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-2 text-[11px] tracking-[0.2em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {expanded
+            ? "Show less"
+            : `Show more · ${(text.length - visible.length).toLocaleString()} chars`}
+        </button>
+      )}
+    </>
+  );
+}
+
 function MessageRow({ m }: { m: Message }) {
   // Two sides: user on the right (our side), assistant/agent on the left.
   // Tool blocks render centered, inline, in a muted style.
@@ -852,7 +889,7 @@ function MessageRow({ m }: { m: Message }) {
         )}
         {hasText && (
           <div className="max-w-[78%] rounded-[20px] rounded-br-md px-5 py-3 bg-secondary text-foreground text-[15px] leading-relaxed break-words">
-            <Markdown tone="light">{stripped}</Markdown>
+            <ClippedMarkdown text={stripped} />
           </div>
         )}
       </div>
@@ -864,7 +901,7 @@ function MessageRow({ m }: { m: Message }) {
     // along a single column edge.
     return (
       <div className="max-w-[78%] pl-5 py-1 text-foreground text-[15px] leading-relaxed break-words">
-        <Markdown tone="light">{m.text || ""}</Markdown>
+        <ClippedMarkdown text={m.text || ""} />
       </div>
     );
   }
