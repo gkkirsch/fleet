@@ -9,6 +9,28 @@ spawn workers. Each gets its own isolated `CLAUDE_CONFIG_DIR`, its own
 dedicated headed Chrome profile, and a private workspace for live
 artifacts you can watch render in an iframe as they're built.
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gkkirsch/fleet/main/install.sh | bash
+```
+
+macOS arm64 / amd64. Drops `amux`, `camux`, `roster`, and `fleetview`
+into `~/.local/bin`, plus `agent-browser` via `npm i -g`.
+
+Prereqs (the script will tell you what's missing): `tmux`, `node`,
+[`claude`](https://docs.claude.com/en/docs/claude-code/cli-reference) (logged in).
+
+Then:
+
+```bash
+fleetview &                   # dashboard at http://localhost:8080
+roster spawn dispatch --kind dispatcher --description "routes user requests"
+```
+
+Open the dashboard, message dispatch — it'll spawn whatever orchestrator
+the work needs.
+
 ## What you get
 
 - **Sidebar tree** of every agent in the fleet (dispatcher → orchestrators
