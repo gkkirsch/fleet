@@ -13,7 +13,7 @@ package main
 import (
 	"bufio"
 	"bytes"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -31,6 +31,13 @@ import (
 
 //go:embed static/inspector.js
 var inspectorJS []byte
+
+// SPA bundle. Built by `cd web && npm run build`. Empty in dev (Vite
+// runs separately on :5173 and proxies /api here); populated for
+// release builds so the single binary serves everything on :8080.
+//
+//go:embed all:web/dist
+var spaFS embed.FS
 
 var (
 	rosterBin = "roster"
@@ -577,16 +584,59 @@ func router() http.Handler {
 		}
 	})
 
-	// Health endpoint + default root for sanity.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			fmt.Fprintln(w, "fleetview backend — run Vite dev server at :5173")
+	// Static SPA. In a release build web/dist is populated and we serve
+	// it; in dev (where dist is empty) we keep the legacy "run Vite"
+	// hint so a curl from the wrong port still tells you what to do.
+	mux.HandleFunc("/", spaHandler())
+
+	return withCORS(mux)
+}
+
+// spaHandler serves the embedded Vite bundle. SPA routing: any path
+// that doesn't match a real file falls back to index.html (so the
+// React client owns its own routes). In dev (dist is empty) it
+// degrades to the "run Vite" hint so the wrong port surfaces an
+// actionable message instead of a 404.
+func spaHandler() http.HandlerFunc {
+	dist, err := fs.Sub(spaFS, "web/dist")
+	if err != nil {
+		return func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "spa fs sub: "+err.Error(), http.StatusInternalServerError)
+		}
+	}
+	indexBytes, indexErr := fs.ReadFile(dist, "index.html")
+	dev := indexErr != nil // no dist embedded → dev build
+	files := http.FileServerFS(dist)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if dev {
+			if r.URL.Path == "/" {
+				fmt.Fprintln(w, "fleetview backend — run Vite dev server at :5173")
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+		// Try to serve the file directly. If it's missing AND looks
+		// like a client-side route (no extension, GET), fall back to
+		// index.html so the SPA can take over.
+		clean := strings.TrimPrefix(r.URL.Path, "/")
+		if clean == "" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(indexBytes)
+			return
+		}
+		if _, err := fs.Stat(dist, clean); err == nil {
+			files.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodGet && !strings.Contains(filepath.Base(r.URL.Path), ".") {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(indexBytes)
 			return
 		}
 		http.NotFound(w, r)
-	})
-
-	return withCORS(mux)
+	}
 }
 
 // withCORS lets the Vite dev server on :5173 hit :8080 freely.
