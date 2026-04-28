@@ -1,7 +1,10 @@
 .PHONY: build backend ui clean install
 
-build: backend ui
+build: ui backend
 
+# Order matters: the Go binary embeds web/dist via go:embed, so the UI
+# bundle must be rebuilt BEFORE the Go compile, otherwise the binary
+# ships yesterday's assets.
 backend:
 	go build -o fleetview .
 

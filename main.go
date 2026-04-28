@@ -123,7 +123,7 @@ func loadAllAgents() ([]Agent, error) {
 			Created:     r.Created,
 			LastSeen:    r.LastSeen,
 			Status:      camuxStatus(r.Target),
-			JSONLPath:   findJSONLPath(r.SessionUUID),
+			JSONLPath:   findJSONLPath(r.SessionUUID, r.Cwd),
 		})
 	}
 	sort.Slice(agents, func(i, j int) bool {
@@ -149,27 +149,72 @@ func camuxStatus(target string) string {
 	return s
 }
 
-// findJSONLPath returns the path of the JSONL file for a given Claude
-// session uuid. Search order:
+// findJSONLPath returns the path of the JSONL file for a Claude session.
 //
-//  1. Per-orch isolated dirs: <roster_data>/claude/*/projects/*/<uuid>.jsonl
-//     (where roster's prepareClaudeIsolation set CLAUDE_CONFIG_DIR for
-//     orchs spawned with isolation)
-//  2. The user's global ~/.claude/projects/*/<uuid>.jsonl (dispatchers
-//     and pre-isolation orchs).
+// We prefer the path that corresponds to the registered uuid, but if a
+// NEWER jsonl exists in the same project directory we return that one
+// instead — Claude Code rolls to a new session uuid whenever the user
+// runs /clear or otherwise resets, and roster's stored uuid lags behind.
+// Without this fallback the UI keeps watching a frozen file while live
+// turns land in a sibling jsonl the user can't see.
 //
-// The filename IS the session UUID, so a glob is enough.
-func findJSONLPath(uuid string) string {
+// Search order:
+//   1. Per-orch isolated dirs: <roster_data>/claude/*/projects/*/<uuid>.jsonl
+//   2. The user's global ~/.claude/projects/*/<uuid>.jsonl
+//
+// Then within whichever project dir we found, swap to the newest jsonl
+// if a newer one exists.
+func findJSONLPath(uuid, cwd string) string {
 	if uuid == "" {
 		return ""
 	}
 	for _, base := range claudeProjectRoots() {
 		pattern := filepath.Join(base, "*", uuid+".jsonl")
-		if matches, _ := filepath.Glob(pattern); len(matches) > 0 {
-			return matches[0]
+		matches, _ := filepath.Glob(pattern)
+		if len(matches) == 0 {
+			continue
 		}
+		registered := matches[0]
+		// If a newer jsonl exists in the SAME project directory,
+		// prefer it — Claude Code rolls to a new uuid on /clear,
+		// and roster's stored uuid lags. We stay within the same
+		// directory as the registered file so we don't accidentally
+		// jump into another orch's isolated config dir.
+		projectDir := filepath.Dir(registered)
+		if newer := newestJSONL(projectDir); newer != "" && newer != registered {
+			ri, _ := os.Stat(registered)
+			ni, _ := os.Stat(newer)
+			if ri != nil && ni != nil && ni.ModTime().After(ri.ModTime()) {
+				return newer
+			}
+		}
+		return registered
 	}
 	return ""
+}
+
+// newestJSONL returns the most recently modified .jsonl in dir, or "".
+func newestJSONL(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var newestPath string
+	var newestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(newestMod) {
+			newestMod = info.ModTime()
+			newestPath = filepath.Join(dir, e.Name())
+		}
+	}
+	return newestPath
 }
 
 // claudeProjectRoots returns every <something>/projects directory we
@@ -490,6 +535,22 @@ func handleNotify(w http.ResponseWriter, r *http.Request, id string) {
 	if from == "" {
 		from = "ui"
 	}
+
+	// Self-heal: if the recipient is parked on a permission/trust prompt,
+	// roster's notify will time out waiting for "ready". Sending Esc
+	// dismisses the prompt and returns Claude Code to the input prompt,
+	// which is what the user implicitly wants when they're typing a new
+	// message anyway. We only do this for dialog states — never for
+	// active streaming, because that would cancel real work.
+	if a, _ := loadAgentMerged(id); a != nil && a.Target != "" {
+		if a.Status == "permission-dialog" || a.Status == "trust-dialog" {
+			_ = exec.Command(camuxBin, "interrupt", a.Target).Run()
+			// Brief pause so camux's status pollers see the prompt
+			// disappear before roster's waitForReady starts.
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+
 	cmd := exec.Command(rosterBin, "notify", id, body.Message, "--from", from)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
@@ -498,6 +559,69 @@ func handleNotify(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	writeJSON(w, map[string]string{"status": "delivered"})
+}
+
+// handleForget removes an agent (kills tmux session + deletes the
+// roster record). For an orchestrator we cascade: every worker whose
+// parent is this orch is forgotten first, then the orch itself. The
+// dispatcher is intentionally NOT deletable from the UI — it's the
+// surface the user is talking to and removing it would brick the app.
+func handleForget(w http.ResponseWriter, r *http.Request, id string) {
+	all, err := loadAllAgents()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var target *Agent
+	for i := range all {
+		if all[i].ID == id {
+			target = &all[i]
+			break
+		}
+	}
+	if target == nil {
+		http.Error(w, "no such agent", http.StatusNotFound)
+		return
+	}
+	if target.Kind == "dispatcher" {
+		http.Error(w, "the dispatcher can't be deleted", http.StatusBadRequest)
+		return
+	}
+	// Forget descendants first so we don't leave orphaned workers
+	// pointing at a missing parent. Cascade is single-level today
+	// (workers have an orchestrator parent), but we walk the tree
+	// recursively in case that changes.
+	var deleted []string
+	var failed []string
+	var visit func(parentID string)
+	visit = func(parentID string) {
+		for _, a := range all {
+			if a.Parent == parentID {
+				visit(a.ID)
+			}
+		}
+		if err := runRosterForget(parentID); err != nil {
+			failed = append(failed, parentID+": "+err.Error())
+		} else {
+			deleted = append(deleted, parentID)
+		}
+	}
+	visit(id)
+	if len(failed) > 0 {
+		http.Error(w, "forget failed for: "+strings.Join(failed, "; "), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"deleted": deleted})
+}
+
+func runRosterForget(id string) error {
+	cmd := exec.Command(rosterBin, "forget", id)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(errb.String()))
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -571,6 +695,12 @@ func router() http.Handler {
 				return
 			}
 			handleUpload(w, r, id)
+		case "forget":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			handleForget(w, r, id)
 		default:
 			if strings.HasPrefix(sub, "artifacts") {
 				handleArtifacts(w, r, id, strings.TrimPrefix(sub, "artifacts"))

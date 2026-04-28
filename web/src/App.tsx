@@ -85,7 +85,12 @@ function useSchedulesPanel() {
 
 export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // User's explicit pick. When null, we fall back to the dispatcher so
+  // the app opens on something useful instead of the empty "select one".
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const selectedId =
+    pickedId ?? agents?.find((a) => a.kind === "dispatcher")?.id ?? null;
+  const setSelectedId = setPickedId;
   const [messages, setMessages] = useState<Message[]>([]);
   const panel = useThreadPanel();
   const artifactPanel = useArtifactPanel();
@@ -143,6 +148,14 @@ export function App() {
       clearInterval(h);
     };
   }, []);
+
+  // If the explicitly-picked agent vanishes (e.g. user just deleted it),
+  // drop the pick so the derived selectedId falls back to the dispatcher.
+  useEffect(() => {
+    if (pickedId && agents && !agents.some((a) => a.id === pickedId)) {
+      setPickedId(null);
+    }
+  }, [agents, pickedId]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -248,6 +261,24 @@ export function App() {
 
 // ─── avatar ──────────────────────────────────────────────────────
 
+// Flat-icon variant of KindTile used in the sidebar tree. No bg square,
+// just the lucide glyph in a muted japandi tone — keeps the row visually
+// quieter so the agent's name/description carries the row.
+function KindGlyph({ kind }: { kind: string }) {
+  const map: Record<string, { fg: string; Icon: typeof Workflow }> = {
+    dispatcher: { fg: "text-[color:var(--clay)]", Icon: MessageCircle },
+    orchestrator: { fg: "text-[color:var(--primary)]", Icon: Layers },
+    worker: { fg: "text-muted-foreground", Icon: ArrowUpRight },
+  };
+  const s = map[kind] ?? map.worker;
+  const Icon = s.Icon;
+  return (
+    <div className="w-[18px] h-[18px] flex-shrink-0 flex items-center justify-center">
+      <Icon className={s.fg} size={15} strokeWidth={1.7} />
+    </div>
+  );
+}
+
 function KindTile({
   kind,
   size = 40,
@@ -325,14 +356,14 @@ function Sidebar({
   const tree = useMemo(() => buildTree(agents ?? []), [agents]);
 
   if (collapsed) {
-    // Rail mode: tiny serif "b" anchor up top (so the brand doesn't
+    // Rail mode: tiny serif "f" anchor up top (so the brand doesn't
     // disappear with the nav) + clickable kind tiles stacked below.
     const ordered = flattenTree(tree);
     return (
-      <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center overflow-hidden">
+      <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center overflow-hidden select-none">
         <div className="pt-10 pb-5">
           <span className="font-[family-name:var(--font-heading)] text-[28px] leading-none tracking-tight text-foreground lowercase">
-            b
+            f
           </span>
         </div>
         <div className="flex flex-col items-center gap-1.5 pb-6">
@@ -358,10 +389,10 @@ function Sidebar({
   }
 
   return (
-    <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px]">
+    <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px] select-none">
       <div className="px-8 pt-10 pb-6">
         <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
-          beepboop
+          flow
         </h1>
       </div>
       <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pb-8 space-y-2">
@@ -414,10 +445,12 @@ function AgentNode({
   const kids = tree.children.get(agent.id) ?? [];
   const isSelected = agent.id === selectedId;
   const isWorker = agent.kind === "worker";
-  // Dispatchers and orchestrators read better as a name + status only;
-  // descriptions belong on workers where their narrow scope is the
-  // distinguishing detail.
-  const showDescription = isWorker && !!agent.description;
+  // Workers show their description as the primary label (their narrow
+  // scope is what distinguishes them — the generated id isn't useful).
+  // Dispatchers/orchestrators show their name. Description-only when
+  // the worker has one; otherwise fall back to the name.
+  const primaryLabel =
+    isWorker && agent.description ? agent.description : displayName(agent);
   const stateHint =
     agent.status === "streaming"
       ? "streaming"
@@ -437,26 +470,31 @@ function AgentNode({
 
   return (
     <div className={isDispatcher && depth === 0 ? "pb-1.5" : ""}>
-      <button
-        type="button"
-        onClick={() => onSelect(agent.id)}
+      <div
         className={cn(
-          "w-full text-left flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg transition-colors duration-150",
+          "relative group rounded-lg transition-colors duration-150",
           isSelected
             ? "bg-card shadow-sm ring-1 ring-border/70"
             : "hover:bg-sidebar-accent/60"
         )}
       >
-        <KindTile kind={agent.kind} size={26} />
+      <button
+        type="button"
+        onClick={() => onSelect(agent.id)}
+        className="w-full text-left flex items-center gap-2.5 px-2.5 py-1.5"
+      >
+        <KindGlyph kind={agent.kind} />
         <div className="min-w-0 flex-1">
-          <div className="font-mono text-[12.5px] font-medium tracking-tight text-foreground truncate">
-            {displayName(agent)}
+          <div
+            className={cn(
+              "text-[12.5px] tracking-tight text-foreground truncate",
+              isWorker
+                ? "font-normal leading-snug"
+                : "font-mono font-medium"
+            )}
+          >
+            {primaryLabel}
           </div>
-          {showDescription && (
-            <div className="text-[11.5px] text-muted-foreground truncate mt-0.5 leading-snug">
-              {agent.description}
-            </div>
-          )}
           {stateHint && (
             <div
               className={cn(
@@ -473,6 +511,12 @@ function AgentNode({
           )}
         </div>
       </button>
+      {isSelected && !isDispatcher && (
+        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <InlineDeleteAgentButton agent={agent} />
+        </div>
+      )}
+      </div>
       {kids.length > 0 && (
         <div className={cn(kidIndent, kidsTopGap, "relative")}>
           {kids.map((k) => (
@@ -590,7 +634,7 @@ function TopNav({
   const SettingsIcon = panelOpen ? PanelRightClose : PanelRight;
   const SidebarIcon = sidebarOpen ? PanelLeftClose : PanelLeft;
   return (
-    <div className="flex items-center justify-between gap-5 px-10 pt-8 pb-2">
+    <div className="@container flex items-center justify-between gap-5 px-10 pt-8 pb-2">
       <button
         type="button"
         onClick={onToggleSidebar}
@@ -608,10 +652,10 @@ function TopNav({
         <button
           type="button"
           onClick={onTogglePanel}
-          title={panelOpen ? "Hide settings panel" : "Show settings panel"}
+          title={panelOpen ? "Hide skills panel" : "Show skills panel"}
           className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
         >
-          <span>Settings</span>
+          <span className="hidden @lg:inline">Skills</span>
           <SettingsIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
         </button>
       </div>
@@ -685,7 +729,7 @@ function BrowserButton({ agent }: { agent: Agent }) {
       disabled={state.loading}
       className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors disabled:opacity-60"
     >
-      <span>Browser</span>
+      <span className="hidden @lg:inline">Browser</span>
       {state.loading ? (
         <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.8} />
       ) : (
@@ -693,6 +737,64 @@ function BrowserButton({ agent }: { agent: Agent }) {
           className={`w-3.5 h-3.5 ${state.alive ? "text-[var(--matcha)]" : ""}`}
           strokeWidth={1.8}
         />
+      )}
+    </button>
+  );
+}
+
+// InlineDeleteAgentButton appears in the sidebar row of the currently-
+// selected agent, on hover only. Two-step: first click arms (icon turns
+// clay), second click commits. Auto-disarms after 4s. Click is captured
+// (stopPropagation) so it doesn't re-trigger the row's select.
+function InlineDeleteAgentButton({ agent }: { agent: Agent }) {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  const cascadeNote =
+    agent.kind === "orchestrator"
+      ? "Delete this space and every worker under it?"
+      : "Delete this worker?";
+
+  const onClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await fetch(`/api/agents/${agent.id}/forget`, { method: "POST" });
+    } finally {
+      setBusy(false);
+      setArmed(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseDown={(e) => e.stopPropagation()}
+      title={armed ? cascadeNote : "Delete"}
+      disabled={busy}
+      className={cn(
+        "flex items-center justify-center w-6 h-6 rounded-md transition-colors",
+        armed
+          ? "text-[color:var(--clay)] bg-[color:var(--clay-soft)]"
+          : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/80"
+      )}
+    >
+      {busy ? (
+        <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.8} />
+      ) : (
+        <Trash2 className="w-3.5 h-3.5" strokeWidth={1.8} />
       )}
     </button>
   );
@@ -835,11 +937,11 @@ function titleFor(a: Agent): string {
 }
 
 // displayName aliases the underlying agent id for UI surfaces. The
-// dispatcher's role is conversational (route requests, route replies),
-// so it reads more naturally as "chat" than "dispatch" in the
-// sidebar / page title — even though the on-disk id stays "dispatch".
+// dispatcher's role is to route requests to the right orchestrator,
+// so "director" reads better than "dispatch" in the sidebar / page
+// title — even though the on-disk id stays "dispatch".
 function displayName(a: Agent): string {
-  if (a.kind === "dispatcher") return "chat";
+  if (a.kind === "dispatcher") return "director";
   return a.id;
 }
 
@@ -1146,11 +1248,21 @@ function NotifyBox({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Reset draft state when the user switches agents — the input is per
+  // agent in spirit, and a stale draft on the wrong agent invites
+  // accidental sends.
+  useEffect(() => {
+    setText("");
+    setAttachments([]);
+    setSendError(null);
+  }, [agentId]);
 
   const interrupt = useCallback(async () => {
     setInterrupting(true);
@@ -1208,6 +1320,14 @@ function NotifyBox({
       attachments.length === 0
         ? body
         : `${body}${body ? "\n\n" : ""}attached:\n${attachments.map((a) => a.path).join("\n")}`;
+    // Optimistic clear: drop the draft + attachments immediately so the
+    // input is ready for the next message. On failure we restore the
+    // text, surface the reason inline, and keep attachments cleared
+    // (re-attaching is cheaper than guessing whether the server kept them).
+    const draftText = text;
+    setText("");
+    setAttachments([]);
+    setSendError(null);
     setSending(true);
     onSent(agentId);
     try {
@@ -1216,10 +1336,14 @@ function NotifyBox({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, from: "ui" }),
       });
-      if (r.ok) {
-        setText("");
-        setAttachments([]);
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        setText(draftText);
+        setSendError(detail.trim() || `send failed (${r.status})`);
       }
+    } catch (e: any) {
+      setText(draftText);
+      setSendError(String(e?.message || e));
     } finally {
       setSending(false);
     }
@@ -1283,12 +1407,15 @@ function NotifyBox({
           )}
           <div className="flex items-end gap-2 pr-2 pb-2">
             <textarea
-              className="flex-1 resize-none bg-transparent outline-none px-5 py-4 text-[15px] leading-relaxed min-h-[112px] placeholder:text-muted-foreground/70"
-              placeholder={dragOver ? "Drop files to attach" : "Write here"}
+              className="flex-1 resize-none bg-transparent outline-none px-5 py-4 text-[15px] leading-relaxed min-h-[112px] placeholder:text-muted-foreground/70 caret-muted-foreground"
+              placeholder={dragOver ? "Drop files to attach" : "What do you need?"}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+                if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+                  e.preventDefault();
+                  send();
+                }
               }}
               onPaste={(e) => {
                 if (e.clipboardData?.files?.length) {
@@ -1349,6 +1476,11 @@ function NotifyBox({
             }}
           />
         </div>
+        {sendError && (
+          <div className="mt-2 text-[12px] text-[color:var(--clay)]">
+            send failed: {sendError}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1569,7 +1701,7 @@ function PanelHeader({
         {crumb}
       </div>
       <div className="mt-1 font-[family-name:var(--font-heading)] text-[28px] leading-[1] tracking-tight text-foreground">
-        {agent?.id ?? "—"}
+        Skills
       </div>
       {sourceLabel && (
         <div className="mt-2 text-[11px] text-muted-foreground font-mono truncate">
@@ -2389,7 +2521,7 @@ function ArtifactNavButton({
       title={open ? "Hide artifact panel" : "Show artifact panel"}
       className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
     >
-      <span>Artifact</span>
+      <span className="hidden @lg:inline">Artifact</span>
       <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
     </button>
   );
@@ -2866,7 +2998,7 @@ function SchedulesNavButton({
       title={open ? "Hide schedules panel" : "Show schedules panel"}
       className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
     >
-      <span>Schedules</span>
+      <span className="hidden @lg:inline">Schedules</span>
       <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.8} />
     </button>
   );
@@ -3046,8 +3178,8 @@ function SchedulesPanel({
   return (
     <aside
       className={cn(
-        "shrink-0 border-l border-border/60 bg-card h-full overflow-hidden transition-[width] duration-200 ease-in-out",
-        open ? "w-[420px] xl:w-[460px]" : "w-0 border-l-0"
+        "shrink-0 border-l border-border/60 bg-sidebar h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[340px] xl:w-[380px]" : "w-0 border-l-0"
       )}
     >
       {open && (
