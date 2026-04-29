@@ -679,6 +679,10 @@ func router() http.Handler {
 				return
 			}
 			handleInstallPlugin(w, r, id)
+		case "plugins/apply-schedule":
+			handleApplyPluginSchedule(w, r, id)
+		case "plugins/run-script":
+			handleRunPluginScript(w, r, id)
 		case "marketplaces":
 			handleMarketplaces(w, r, id)
 		case "credentials":

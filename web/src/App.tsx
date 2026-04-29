@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
 import { SPINNER_PHRASES } from "./spinnerVerbs";
-import type { Agent, Artifact, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Schedule, Skill } from "./types";
+import type { Agent, Artifact, ClaudeDirView, CredentialDecl, Marketplace, MarketPlugin, Message, NamedMD, Plugin, Schedule, ScheduleSuggestion, SetupScript, Skill } from "./types";
 
 const POLL_MS = 2000;
 const PANEL_STORAGE_KEY = "fleetview-thread-panel-open";
@@ -2378,29 +2378,13 @@ function PluginDetailView({
         </section>
       )}
 
-      <section>
-        <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-2">
-          Setup
-        </div>
-        {!isInstalled && (
-          <p className="text-[12px] leading-relaxed text-muted-foreground italic">
-            Install the plugin first to see any setup steps.
-          </p>
-        )}
-        {isInstalled && (!installed?.credentials || installed.credentials.length === 0) && (
-          <p className="text-[12px] leading-relaxed text-muted-foreground italic">
-            No credentials required. Claude Code will load this plugin on its next start.
-          </p>
-        )}
-        {isInstalled && installed?.credentials && installed.credentials.length > 0 && (
-          <CredentialForm
-            agentId={view.source === "global" ? "" : view.source_id || ""}
-            plugin={pluginName}
-            marketplace={marketplace}
-            credentials={installed.credentials}
-          />
-        )}
-      </section>
+      <PluginSetupSection
+        isInstalled={isInstalled}
+        installed={installed}
+        agentId={view.source === "global" ? "" : view.source_id || ""}
+        pluginName={pluginName}
+        marketplace={marketplace}
+      />
     </div>
   );
 }
@@ -2542,6 +2526,298 @@ function PluginActions({
         </p>
       )}
     </>
+  );
+}
+
+// PluginSetupSection rolls up everything a plugin can ship in its
+// config.json: credentials (form fields), suggested schedules
+// (one-click apply), and setup scripts (one-click run).
+function PluginSetupSection({
+  isInstalled,
+  installed,
+  agentId,
+  pluginName,
+  marketplace,
+}: {
+  isInstalled: boolean;
+  installed: Plugin | undefined;
+  agentId: string;
+  pluginName: string;
+  marketplace: string;
+}) {
+  if (!isInstalled) {
+    return (
+      <section>
+        <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-2">
+          Setup
+        </div>
+        <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+          Install the plugin first to see any setup steps.
+        </p>
+      </section>
+    );
+  }
+
+  const creds = installed?.credentials ?? [];
+  const schedules = installed?.schedules ?? [];
+  const scripts = installed?.setup_scripts ?? [];
+  const nothing =
+    creds.length === 0 && schedules.length === 0 && scripts.length === 0;
+
+  return (
+    <div className="space-y-7">
+      {nothing && (
+        <section>
+          <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-2">
+            Setup
+          </div>
+          <p className="text-[12px] leading-relaxed text-muted-foreground italic">
+            No setup needed. The plugin loads on the next agent restart.
+          </p>
+        </section>
+      )}
+
+      {creds.length > 0 && (
+        <section>
+          <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-3">
+            Credentials
+          </div>
+          <CredentialForm
+            agentId={agentId}
+            plugin={pluginName}
+            marketplace={marketplace}
+            credentials={creds}
+          />
+          <p className="mt-3 text-[11px] text-muted-foreground leading-relaxed">
+            Saved values are exported as{" "}
+            <code className="font-mono">$KEY</code> on the agent's tmux
+            session, so plugin scripts can read them directly.
+          </p>
+        </section>
+      )}
+
+      {schedules.length > 0 && (
+        <section>
+          <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-3">
+            Suggested schedules
+          </div>
+          <div className="space-y-2">
+            {schedules.map((s) => (
+              <SuggestedScheduleRow
+                key={s.id}
+                agentId={agentId}
+                plugin={pluginName}
+                marketplace={marketplace}
+                schedule={s}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {scripts.length > 0 && (
+        <section>
+          <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-3">
+            Setup scripts
+          </div>
+          <div className="space-y-2">
+            {scripts.map((s) => (
+              <SetupScriptRow
+                key={s.id}
+                agentId={agentId}
+                plugin={pluginName}
+                marketplace={marketplace}
+                script={s}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function SuggestedScheduleRow({
+  agentId,
+  plugin,
+  marketplace,
+  schedule,
+}: {
+  agentId: string;
+  plugin: string;
+  marketplace: string;
+  schedule: ScheduleSuggestion;
+}) {
+  const [applied, setApplied] = useState(!!schedule.applied);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Pick up server-side state when the parent re-fetches.
+  useEffect(() => {
+    setApplied(!!schedule.applied);
+  }, [schedule.applied]);
+
+  const apply = async () => {
+    if (!agentId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/agents/${agentId}/plugins/apply-schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plugin,
+          marketplace,
+          schedule_id: schedule.id,
+        }),
+      });
+      if (!r.ok) {
+        setError((await r.text()).trim() || `apply failed (${r.status})`);
+      } else {
+        setApplied(true);
+      }
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg bg-card ring-1 ring-border/60 px-3.5 py-3">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-medium text-foreground">
+            {schedule.label || schedule.id}
+          </div>
+          {schedule.description && (
+            <div className="mt-1 text-[11.5px] text-muted-foreground leading-relaxed">
+              {schedule.description}
+            </div>
+          )}
+          <div className="mt-1 text-[11px] text-muted-foreground font-mono">
+            {schedule.cron}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={apply}
+          disabled={applied || busy}
+          className={cn(
+            "shrink-0 inline-flex items-center gap-1.5 h-7 px-3 rounded-md ring-1 transition text-[10px] tracking-[0.22em] uppercase disabled:opacity-60",
+            applied
+              ? "ring-[color:var(--matcha-soft)] text-[color:var(--primary)] bg-[color:var(--matcha-soft)]/50"
+              : "ring-border/70 text-foreground hover:ring-border bg-background"
+          )}
+        >
+          {busy ? (
+            <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+          ) : applied ? (
+            <Check className="w-3 h-3" strokeWidth={2} />
+          ) : (
+            <Plus className="w-3 h-3" strokeWidth={1.8} />
+          )}
+          {applied ? "Added" : "Add"}
+        </button>
+      </div>
+      {error && (
+        <p className="mt-2 text-[11px] text-[color:var(--clay)]/90 break-words">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SetupScriptRow({
+  agentId,
+  plugin,
+  marketplace,
+  script,
+}: {
+  agentId: string;
+  plugin: string;
+  marketplace: string;
+  script: SetupScript;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; output: string } | null>(
+    null
+  );
+
+  const run = async () => {
+    if (!agentId) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/agents/${agentId}/plugins/run-script`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plugin,
+          marketplace,
+          script_id: script.id,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      setResult({
+        ok: r.ok && d.status === "ran",
+        output: d.output || d.error || (await r.text().catch(() => "")) || "",
+      });
+    } catch (e: any) {
+      setResult({ ok: false, output: String(e?.message || e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg bg-card ring-1 ring-border/60 px-3.5 py-3">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-medium text-foreground">
+            {script.label || script.id}
+          </div>
+          {script.description && (
+            <div className="mt-1 text-[11.5px] text-muted-foreground leading-relaxed">
+              {script.description}
+            </div>
+          )}
+          <pre className="mt-2 text-[11px] font-mono text-muted-foreground bg-secondary/40 rounded px-2 py-1.5 overflow-x-auto whitespace-pre-wrap break-all">
+            {script.command}
+          </pre>
+        </div>
+        <button
+          type="button"
+          onClick={run}
+          disabled={busy}
+          className={cn(
+            "shrink-0 inline-flex items-center gap-1.5 h-7 px-3 rounded-md ring-1 transition text-[10px] tracking-[0.22em] uppercase disabled:opacity-60",
+            result?.ok
+              ? "ring-[color:var(--matcha-soft)] text-[color:var(--primary)] bg-[color:var(--matcha-soft)]/50"
+              : "ring-border/70 text-foreground hover:ring-border bg-background"
+          )}
+        >
+          {busy ? (
+            <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+          ) : result?.ok ? (
+            <Check className="w-3 h-3" strokeWidth={2} />
+          ) : (
+            <TerminalSquare className="w-3 h-3" strokeWidth={1.8} />
+          )}
+          {result?.ok ? "Ran" : "Run"}
+        </button>
+      </div>
+      {result && !result.ok && result.output && (
+        <pre className="mt-2 text-[11px] text-[color:var(--clay)]/90 whitespace-pre-wrap break-words font-mono">
+          {result.output}
+        </pre>
+      )}
+      {result?.ok && result.output && (
+        <pre className="mt-2 text-[11px] text-muted-foreground whitespace-pre-wrap break-words font-mono">
+          {result.output}
+        </pre>
+      )}
+    </div>
   );
 }
 

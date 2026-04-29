@@ -10,29 +10,83 @@ import (
 	"strings"
 )
 
-// readPluginCredentials looks for a plugin's declared credentials. First
-// choice is .claude-plugin/credentials.json at the plugin's install
-// path. Each entry's `Set` is derived from the macOS Keychain under the
-// per-agent service name so the UI can show which are already saved.
-func readPluginCredentials(installPath, agentID, pluginName, marketplace string) []CredentialDecl {
+// readPluginConfig reads a plugin's setup metadata. Two sources, in
+// preference order:
+//
+//  1. .claude-plugin/config.json — Flow's richer schema (credentials +
+//     schedules + setup_scripts)
+//  2. .claude-plugin/credentials.json — legacy, credentials only
+//
+// Returns the credentials, suggested schedules, and setup scripts.
+// Each schedule's `Applied` is set if the orch already has a task with
+// the same id in its scheduled_tasks.json.
+func readPluginConfig(installPath, claudeDir, agentID, pluginName, marketplace string) (
+	creds []CredentialDecl,
+	schedules []ScheduleSuggestion,
+	scripts []SetupScript,
+) {
 	if installPath == "" {
-		return nil
+		return nil, nil, nil
 	}
-	b, err := os.ReadFile(filepath.Join(installPath, ".claude-plugin", "credentials.json"))
+	cfgPath := filepath.Join(installPath, ".claude-plugin", "config.json")
+	if b, err := os.ReadFile(cfgPath); err == nil {
+		var cfg struct {
+			Credentials  []CredentialDecl     `json:"credentials"`
+			Schedules    []ScheduleSuggestion `json:"schedules"`
+			SetupScripts []SetupScript        `json:"setup_scripts"`
+		}
+		if err := json.Unmarshal(b, &cfg); err == nil {
+			creds = cfg.Credentials
+			schedules = cfg.Schedules
+			scripts = cfg.SetupScripts
+		}
+	} else {
+		// Fallback: credentials.json only.
+		legacyPath := filepath.Join(installPath, ".claude-plugin", "credentials.json")
+		if b, err := os.ReadFile(legacyPath); err == nil {
+			_ = json.Unmarshal(b, &creds)
+		}
+	}
+
+	if agentID != "" {
+		for i := range creds {
+			creds[i].Set = keychainHas(agentID, pluginName, marketplace, creds[i].Key)
+		}
+	}
+
+	if len(schedules) > 0 && claudeDir != "" {
+		appliedIDs := readAppliedScheduleIDs(claudeDir)
+		for i := range schedules {
+			schedules[i].Applied = appliedIDs[schedules[i].ID]
+		}
+	}
+
+	return creds, schedules, scripts
+}
+
+// readAppliedScheduleIDs returns the set of task ids currently in the
+// orch's scheduled_tasks.json. Returns empty map if file missing.
+func readAppliedScheduleIDs(claudeDir string) map[string]bool {
+	path := filepath.Join(claudeDir, "scheduled_tasks.json")
+	out := map[string]bool{}
+	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return out
 	}
-	var decls []CredentialDecl
-	if err := json.Unmarshal(b, &decls); err != nil {
-		return nil
+	var doc struct {
+		Tasks []struct {
+			ID string `json:"id"`
+		} `json:"tasks"`
 	}
-	if agentID == "" {
-		return decls
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return out
 	}
-	for i := range decls {
-		decls[i].Set = keychainHas(agentID, pluginName, marketplace, decls[i].Key)
+	for _, t := range doc.Tasks {
+		if t.ID != "" {
+			out[t.ID] = true
+		}
 	}
-	return decls
+	return out
 }
 
 // keychainService keys our stored secrets by agent. Account bundles the

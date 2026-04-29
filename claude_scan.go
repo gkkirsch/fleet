@@ -43,13 +43,39 @@ type MemoryDoc struct {
 
 // Plugin is a plugin already installed in the agent's .claude dir.
 type Plugin struct {
-	Name        string           `json:"name"`
-	Marketplace string           `json:"marketplace"`
-	Version     string           `json:"version,omitempty"`
-	Description string           `json:"description,omitempty"`
-	Author      string           `json:"author,omitempty"`
-	Enabled     bool             `json:"enabled"`
-	Credentials []CredentialDecl `json:"credentials,omitempty"`
+	Name         string                `json:"name"`
+	Marketplace  string                `json:"marketplace"`
+	Version      string                `json:"version,omitempty"`
+	Description  string                `json:"description,omitempty"`
+	Author       string                `json:"author,omitempty"`
+	Enabled      bool                  `json:"enabled"`
+	Credentials  []CredentialDecl      `json:"credentials,omitempty"`
+	Schedules    []ScheduleSuggestion  `json:"schedules,omitempty"`
+	SetupScripts []SetupScript         `json:"setup_scripts,omitempty"`
+}
+
+// ScheduleSuggestion comes from a plugin's .claude-plugin/config.json.
+// `Applied` is derived at scan time — true when the orch's
+// scheduled_tasks.json already has a task with the same id.
+type ScheduleSuggestion struct {
+	ID          string `json:"id"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	Cron        string `json:"cron"`
+	Prompt      string `json:"prompt"`
+	Recurring   bool   `json:"recurring,omitempty"`
+	Applied     bool   `json:"applied"`
+}
+
+// SetupScript is a one-shot bash command shipped with a plugin to
+// scaffold whatever the plugin needs (directories, starter files,
+// etc.) in the orch's cwd.
+type SetupScript struct {
+	ID          string `json:"id"`
+	Label       string `json:"label,omitempty"`
+	Description string `json:"description,omitempty"`
+	Command     string `json:"command"`
+	RunOnce     bool   `json:"run_once,omitempty"`
 }
 
 // CredentialDecl comes from a plugin's .claude-plugin/credentials.json.
@@ -187,7 +213,9 @@ func scanInstalledPluginsForAgent(dir, agentID string) []Plugin {
 			p.Description = meta.Description
 			p.Author = meta.AuthorName
 		}
-		p.Credentials = readPluginCredentials(entries[0].InstallPath, agentID, p.Name, p.Marketplace)
+		p.Credentials, p.Schedules, p.SetupScripts = readPluginConfig(
+			entries[0].InstallPath, dir, agentID, p.Name, p.Marketplace,
+		)
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool {

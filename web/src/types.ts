@@ -56,6 +56,26 @@ export interface Plugin {
   author?: string;
   enabled: boolean;
   credentials?: CredentialDecl[];
+  schedules?: ScheduleSuggestion[];
+  setup_scripts?: SetupScript[];
+}
+
+export interface ScheduleSuggestion {
+  id: string;
+  label?: string;
+  description?: string;
+  cron: string;
+  prompt: string;
+  recurring?: boolean;
+  applied: boolean;
+}
+
+export interface SetupScript {
+  id: string;
+  label?: string;
+  description?: string;
+  command: string;
+  run_once?: boolean;
 }
 
 export interface MarketPlugin {
