@@ -219,3 +219,13 @@
     background: color-mix(in oklch, var(--stone) 60%, transparent);
     background-clip: padding-box;
 }
+
+/* Used on the chat input — content should still scroll past the height
+   cap, but the scrollbar is intentionally invisible so the box reads
+   as a tidy, fixed-shape input rather than a chunky scroll panel. */
+.scrollbar-none {
+    scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+    display: none;
+}

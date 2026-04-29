@@ -679,6 +679,8 @@ func router() http.Handler {
 				return
 			}
 			handleInstallPlugin(w, r, id)
+		case "marketplaces":
+			handleMarketplaces(w, r, id)
 		case "credentials":
 			handleCredentials(w, r, id)
 		case "browser":

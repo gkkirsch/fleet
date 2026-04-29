@@ -1254,6 +1254,20 @@ function NotifyBox({
   const [dragOver, setDragOver] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Auto-resize the textarea to fit its content, up to a hard cap.
+  // Past the cap it scrolls; the scrollbar is hidden via CSS so we
+  // don't get the chunky default rendering. We reset to "auto" first
+  // so shrinking after a delete actually works (otherwise scrollHeight
+  // is sticky at the previous max).
+  useEffect(() => {
+    const ta = textRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const max = 280; // ~12 lines at 15px/1.5 line-height
+    ta.style.height = Math.min(ta.scrollHeight, max) + "px";
+  }, [text]);
 
   // Reset draft state when the user switches agents — the input is per
   // agent in spirit, and a stale draft on the wrong agent invites
@@ -1407,7 +1421,8 @@ function NotifyBox({
           )}
           <div className="flex items-end gap-2 pr-2 pb-2">
             <textarea
-              className="flex-1 resize-none bg-transparent outline-none px-5 py-4 text-[15px] leading-relaxed min-h-[112px] placeholder:text-muted-foreground/70 caret-muted-foreground"
+              ref={textRef}
+              className="scrollbar-none flex-1 resize-none bg-transparent outline-none px-5 py-4 text-[15px] leading-relaxed min-h-[112px] placeholder:text-muted-foreground/70 caret-muted-foreground"
               placeholder={dragOver ? "Drop files to attach" : "What do you need?"}
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -1490,7 +1505,9 @@ function NotifyBox({
 
 type PanelRoute =
   | { kind: "home" }
-  | { kind: "marketplace" }
+  | { kind: "marketplaces" } // hub: all registered marketplaces
+  | { kind: "marketplace"; marketplace: string } // a single marketplace
+  | { kind: "marketplace-add" }
   | {
       kind: "plugin";
       pluginName: string;
@@ -1585,6 +1602,46 @@ function ThreadPanel({
     [agent]
   );
 
+  // mutateMarketplace: thin wrapper around POST /api/agents/:id/marketplaces.
+  // Returns the trimmed body on failure so callers can surface it inline.
+  const mutateMarketplace = useCallback(
+    async (
+      body: {
+        action:
+          | "add"
+          | "remove"
+          | "update"
+          | "plugin-update"
+          | "plugin-remove";
+        source?: string;
+        name?: string;
+        plugin?: string;
+        marketplace?: string;
+        restart?: boolean;
+      }
+    ): Promise<{ ok: boolean; error?: string }> => {
+      if (!agent) return { ok: false, error: "no agent" };
+      try {
+        const r = await fetch(`/api/agents/${agent.id}/marketplaces`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          const msg = (await r.text()).trim() || `HTTP ${r.status}`;
+          return { ok: false, error: msg };
+        }
+        // Refetch immediately so UI reflects the change without
+        // waiting for the 4s polling tick.
+        load();
+        return { ok: true };
+      } catch (err: any) {
+        return { ok: false, error: String(err?.message || err) };
+      }
+    },
+    [agent, load]
+  );
+
   // Clear an install error when the poll shows the plugin landed after all.
   useEffect(() => {
     if (!data) return;
@@ -1630,18 +1687,67 @@ function ThreadPanel({
             {agent && data && route.kind === "home" && (
               <HomeView
                 view={data}
-                onBrowse={() => setRoute({ kind: "marketplace" })}
+                onBrowse={(name) =>
+                  setRoute(
+                    name
+                      ? { kind: "marketplace", marketplace: name }
+                      : { kind: "marketplaces" }
+                  )
+                }
                 onOpenPlugin={(name, mp) => openPlugin(name, mp, "home")}
+              />
+            )}
+            {agent && data && route.kind === "marketplaces" && (
+              <MarketplacesHub
+                view={data}
+                onOpen={(name) =>
+                  setRoute({ kind: "marketplace", marketplace: name })
+                }
+                onAdd={() => setRoute({ kind: "marketplace-add" })}
+                onUpdateAll={() =>
+                  mutateMarketplace({ action: "update", restart: true })
+                }
+                onBack={() => setRoute({ kind: "home" })}
+              />
+            )}
+            {agent && data && route.kind === "marketplace-add" && (
+              <MarketplaceAddView
+                onSubmit={async (source) => {
+                  const res = await mutateMarketplace({
+                    action: "add",
+                    source,
+                  });
+                  if (res.ok) setRoute({ kind: "marketplaces" });
+                  return res;
+                }}
+                onBack={() => setRoute({ kind: "marketplaces" })}
               />
             )}
             {agent && data && route.kind === "marketplace" && (
               <MarketplaceView
                 view={data}
+                marketplace={route.marketplace}
                 installing={installing}
                 errors={installErrors}
                 onInstall={install}
                 onOpenPlugin={(name, mp) => openPlugin(name, mp, "marketplace")}
-                onBack={() => setRoute({ kind: "home" })}
+                onUpdate={() =>
+                  mutateMarketplace({
+                    action: "update",
+                    name: route.marketplace,
+                    restart: true,
+                  })
+                }
+                onRemove={async () => {
+                  const res = await mutateMarketplace({
+                    action: "remove",
+                    name: route.marketplace,
+                    restart: true,
+                  });
+                  if (res.ok) setRoute({ kind: "marketplaces" });
+                  return res;
+                }}
+                onBack={() => setRoute({ kind: "marketplaces" })}
               />
             )}
             {agent && data && route.kind === "plugin" && (
@@ -1656,12 +1762,32 @@ function ThreadPanel({
                   installErrors[`${route.pluginName}@${route.marketplace}`]
                 }
                 onInstall={install}
-                onBack={() =>
-                  setRoute({
-                    kind: route.origin === "marketplace" ? "marketplace" : "home",
+                onUpdate={() =>
+                  mutateMarketplace({
+                    action: "plugin-update",
+                    plugin: route.pluginName,
+                    marketplace: route.marketplace,
+                    restart: true,
                   })
                 }
-                backLabel={route.origin === "marketplace" ? "Marketplace" : "Installed"}
+                onUninstall={() =>
+                  mutateMarketplace({
+                    action: "plugin-remove",
+                    plugin: route.pluginName,
+                    marketplace: route.marketplace,
+                    restart: true,
+                  })
+                }
+                onBack={() =>
+                  setRoute(
+                    route.origin === "marketplace"
+                      ? { kind: "marketplace", marketplace: route.marketplace }
+                      : { kind: "home" }
+                  )
+                }
+                backLabel={
+                  route.origin === "marketplace" ? route.marketplace : "Installed"
+                }
               />
             )}
           </div>
@@ -1687,14 +1813,12 @@ function PanelHeader({
       : view.source === "inherited"
         ? `inherited · ${view.source_id}`
         : "global ~/.claude";
-  const crumb =
-    route.kind === "home"
-      ? "Installed"
-      : route.kind === "marketplace"
-        ? "Installed · Marketplace"
-        : route.origin === "marketplace"
-          ? "Marketplace · Plugin"
-          : "Installed · Plugin";
+  let crumb = "Installed";
+  if (route.kind === "marketplaces") crumb = "Marketplaces";
+  else if (route.kind === "marketplace") crumb = `Marketplaces · ${route.marketplace}`;
+  else if (route.kind === "marketplace-add") crumb = "Marketplaces · Add";
+  else if (route.kind === "plugin")
+    crumb = route.origin === "marketplace" ? `${route.marketplace} · Plugin` : "Plugin";
   return (
     <div className="px-8 pt-8 pb-5 border-b border-border/50">
       <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
@@ -1718,7 +1842,7 @@ function HomeView({
   onOpenPlugin,
 }: {
   view: ClaudeDirView;
-  onBrowse: () => void;
+  onBrowse: (marketplace?: string) => void;
   onOpenPlugin: (plugin: string, marketplace: string) => void;
 }) {
   const skills = view.skills ?? [];
@@ -1726,10 +1850,6 @@ function HomeView({
   const commands = view.commands ?? [];
   const plugins = view.plugins ?? [];
   const markets = view.marketplaces ?? [];
-  const availableCount = markets.reduce(
-    (acc, m) => acc + m.plugins.filter((p) => !p.installed).length,
-    0
-  );
   const anythingInstalled =
     skills.length + agents.length + commands.length + plugins.length > 0 ||
     !!view.memory;
@@ -1740,13 +1860,29 @@ function HomeView({
           nothing installed yet
         </p>
       )}
-      {markets.length > 0 && (
-        <BrowseEntry
-          totalAvailable={availableCount}
-          totalPlugins={markets.reduce((acc, m) => acc + m.plugins.length, 0)}
-          onClick={onBrowse}
-        />
-      )}
+      <Section icon={Store} label="Marketplaces" count={markets.length}>
+        <div className="space-y-2">
+          {markets.map((m) => (
+            <MarketplaceTile
+              key={m.name}
+              marketplace={m}
+              onClick={() => onBrowse(m.name)}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={() => onBrowse()}
+            className="group w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl ring-1 ring-dashed ring-border/60 hover:ring-border hover:bg-card transition-colors text-left"
+          >
+            <div className="shrink-0 w-7 h-7 rounded-lg bg-secondary flex items-center justify-center">
+              <Plus className="text-muted-foreground" size={13} strokeWidth={1.8} />
+            </div>
+            <div className="text-[12.5px] text-muted-foreground group-hover:text-foreground transition-colors">
+              Manage marketplaces
+            </div>
+          </button>
+        </div>
+      </Section>
       {plugins.length > 0 && (
         <Section icon={Package} label="Plugins" count={plugins.length}>
           {plugins.map((p) => (
@@ -1794,38 +1930,352 @@ function HomeView({
   );
 }
 
+// MarketplacesHub lists every registered marketplace as a card. From
+// here the user can drill into one, refresh all of them, or add a new
+// one. Replaces the old "all plugins flat" view.
+function MarketplacesHub({
+  view,
+  onOpen,
+  onAdd,
+  onUpdateAll,
+  onBack,
+}: {
+  view: ClaudeDirView;
+  onOpen: (marketplace: string) => void;
+  onAdd: () => void;
+  onUpdateAll: () => Promise<{ ok: boolean; error?: string }>;
+  onBack: () => void;
+}) {
+  const markets = view.marketplaces ?? [];
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
+  const refreshAll = async () => {
+    setUpdating(true);
+    setUpdateError(null);
+    const res = await onUpdateAll();
+    if (!res.ok) setUpdateError(res.error || "update failed");
+    setUpdating(false);
+  };
+
+  return (
+    <div className="px-8 pt-8 pb-6 space-y-6">
+      <BackCrumb label="Installed" onClick={onBack} />
+      <header className="space-y-2">
+        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
+          <Store className="w-3 h-3" strokeWidth={1.8} />
+          Marketplaces
+        </div>
+        <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
+          {markets.length === 0
+            ? "None yet"
+            : `${markets.length} ${markets.length === 1 ? "marketplace" : "marketplaces"}`}
+        </h3>
+      </header>
+
+      {markets.length === 0 && (
+        <p className="text-[13px] text-muted-foreground italic">
+          Add a marketplace to browse plugins.
+        </p>
+      )}
+
+      <div className="space-y-2">
+        {markets.map((m) => (
+          <MarketplaceTile
+            key={m.name}
+            marketplace={m}
+            onClick={() => onOpen(m.name)}
+          />
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 pt-2">
+        <button
+          type="button"
+          onClick={onAdd}
+          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-background ring-1 ring-border/70 hover:ring-border text-[10px] tracking-[0.22em] uppercase text-foreground transition"
+        >
+          <Plus className="w-3 h-3" strokeWidth={1.8} />
+          Add
+        </button>
+        {markets.length > 0 && (
+          <button
+            type="button"
+            onClick={refreshAll}
+            disabled={updating}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-background ring-1 ring-border/70 hover:ring-border text-[10px] tracking-[0.22em] uppercase text-muted-foreground hover:text-foreground transition disabled:opacity-60"
+          >
+            {updating ? (
+              <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+            ) : (
+              <Sparkles className="w-3 h-3" strokeWidth={1.8} />
+            )}
+            Update all
+          </button>
+        )}
+      </div>
+      {updateError && (
+        <p className="text-[11px] leading-snug text-[color:var(--clay)]/90">
+          {updateError}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// MarketplaceTile is a compact card used in both the Skills home view
+// and the marketplaces hub. Click drills into the marketplace's
+// plugin list.
+function MarketplaceTile({
+  marketplace,
+  onClick,
+}: {
+  marketplace: Marketplace;
+  onClick: () => void;
+}) {
+  const installed = marketplace.plugins.filter((p) => p.installed).length;
+  const total = marketplace.plugins.length;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group w-full flex items-center gap-3 px-3.5 py-3 rounded-xl bg-background ring-1 ring-border/60 hover:ring-border transition-colors text-left"
+    >
+      <div className="shrink-0 w-8 h-8 rounded-lg bg-[color:var(--matcha-soft)] flex items-center justify-center">
+        <Store
+          className="text-[color:var(--primary)]"
+          size={14}
+          strokeWidth={1.8}
+        />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] font-medium text-foreground truncate">
+          {marketplace.name}
+        </div>
+        <div className="text-[11px] text-muted-foreground font-mono truncate">
+          {total === 0
+            ? "no plugins"
+            : `${installed}/${total} installed`}
+          {marketplace.source ? ` · ${marketplace.source}` : ""}
+        </div>
+      </div>
+      <ChevronRight
+        className="shrink-0 text-muted-foreground group-hover:text-foreground transition-colors"
+        size={14}
+        strokeWidth={1.8}
+      />
+    </button>
+  );
+}
+
+// MarketplaceAddView is a small form that takes a source string
+// (URL, GitHub slug, or local path) and POSTs `marketplace add`.
+function MarketplaceAddView({
+  onSubmit,
+  onBack,
+}: {
+  onSubmit: (source: string) => Promise<{ ok: boolean; error?: string }>;
+  onBack: () => void;
+}) {
+  const [source, setSource] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!source.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    const res = await onSubmit(source.trim());
+    if (!res.ok) {
+      setError(res.error || "add failed");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="px-8 pt-8 pb-6 space-y-6">
+      <BackCrumb label="Marketplaces" onClick={onBack} />
+      <header className="space-y-2">
+        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
+          <Plus className="w-3 h-3" strokeWidth={1.8} />
+          Add marketplace
+        </div>
+        <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
+          New source
+        </h3>
+        <p className="text-[12.5px] text-muted-foreground leading-relaxed">
+          A GitHub repo (<code className="font-mono">owner/repo</code>), a full URL, or a local
+          path. Claude Code will clone it into this space's plugin
+          directory.
+        </p>
+      </header>
+      <form onSubmit={submit} className="space-y-3">
+        <input
+          type="text"
+          autoFocus
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          placeholder="anthropics/claude-code-marketplace"
+          className="w-full h-9 px-3 rounded-md bg-background ring-1 ring-border/70 focus:ring-border outline-none text-[13px] font-mono caret-muted-foreground"
+          disabled={busy}
+        />
+        <button
+          type="submit"
+          disabled={!source.trim() || busy}
+          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-background ring-1 ring-border/70 hover:ring-border text-[10px] tracking-[0.22em] uppercase text-foreground transition disabled:opacity-60"
+        >
+          {busy ? (
+            <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+          ) : (
+            <Plus className="w-3 h-3" strokeWidth={1.8} />
+          )}
+          {busy ? "adding…" : "Add marketplace"}
+        </button>
+      </form>
+      {error && (
+        <p className="text-[11px] leading-snug text-[color:var(--clay)]/90 whitespace-pre-wrap break-words">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// MarketplaceView shows a single marketplace's plugin list with
+// per-marketplace actions (Update / Remove). Drilled into from the
+// hub or from the Skills home tile.
 function MarketplaceView({
   view,
+  marketplace,
   installing,
   errors,
   onInstall,
   onOpenPlugin,
+  onUpdate,
+  onRemove,
   onBack,
 }: {
   view: ClaudeDirView;
+  marketplace: string;
   installing: Set<string>;
   errors: Record<string, string>;
   onInstall: (plugin: string, marketplace: string) => void;
   onOpenPlugin: (plugin: string, marketplace: string) => void;
+  onUpdate: () => Promise<{ ok: boolean; error?: string }>;
+  onRemove: () => Promise<{ ok: boolean; error?: string }>;
   onBack: () => void;
 }) {
-  const markets = view.marketplaces ?? [];
-  return (
-    <div className="px-8 pt-8 pb-6 space-y-9">
-      <BackCrumb label="Installed" onClick={onBack} />
-      {markets.length === 0 && (
+  const m = (view.marketplaces ?? []).find((x) => x.name === marketplace);
+  const [updating, setUpdating] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  if (!m) {
+    return (
+      <div className="px-8 pt-8 pb-6 space-y-6">
+        <BackCrumb label="Marketplaces" onClick={onBack} />
         <p className="text-sm italic text-muted-foreground">
-          no marketplaces registered
+          marketplace not found — it may have just been removed.
+        </p>
+      </div>
+    );
+  }
+
+  const refresh = async () => {
+    setUpdating(true);
+    setActionError(null);
+    const res = await onUpdate();
+    if (!res.ok) setActionError(res.error || "update failed");
+    setUpdating(false);
+  };
+
+  const remove = async () => {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setRemoving(true);
+    setActionError(null);
+    const res = await onRemove();
+    if (!res.ok) {
+      setActionError(res.error || "remove failed");
+      setRemoving(false);
+      setArmed(false);
+    }
+  };
+
+  return (
+    <div className="px-8 pt-8 pb-6 space-y-6">
+      <BackCrumb label="Marketplaces" onClick={onBack} />
+      <header className="space-y-2">
+        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
+          <Store className="w-3 h-3" strokeWidth={1.8} />
+          Marketplace
+        </div>
+        <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
+          {m.name}
+        </h3>
+        {m.source && (
+          <div className="text-[11px] text-muted-foreground font-mono truncate">
+            {m.source}
+          </div>
+        )}
+      </header>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={updating || removing}
+          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-background ring-1 ring-border/70 hover:ring-border text-[10px] tracking-[0.22em] uppercase text-foreground transition disabled:opacity-60"
+        >
+          {updating ? (
+            <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+          ) : (
+            <Sparkles className="w-3 h-3" strokeWidth={1.8} />
+          )}
+          Update
+        </button>
+        <button
+          type="button"
+          onClick={remove}
+          disabled={updating || removing}
+          className={cn(
+            "inline-flex items-center gap-1.5 h-8 px-3 rounded-md ring-1 transition text-[10px] tracking-[0.22em] uppercase disabled:opacity-60",
+            armed
+              ? "ring-[color:var(--clay)]/60 text-[color:var(--clay)] bg-[color:var(--clay-soft)]/40"
+              : "ring-border/70 text-muted-foreground hover:text-foreground hover:ring-border bg-background"
+          )}
+        >
+          {removing ? (
+            <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+          ) : (
+            <Trash2 className="w-3 h-3" strokeWidth={1.8} />
+          )}
+          {armed ? "Confirm" : "Remove"}
+        </button>
+      </div>
+      {actionError && (
+        <p className="text-[11px] leading-snug text-[color:var(--clay)]/90 whitespace-pre-wrap break-words">
+          {actionError}
         </p>
       )}
-      {markets.map((m) => (
-        <Section
-          key={m.name}
-          icon={Store}
-          label={m.name}
-          count={m.plugins.length}
-        >
-          {m.plugins.map((mp) => {
+
+      <Section icon={Package} label="Plugins" count={m.plugins.length}>
+        {m.plugins.length === 0 ? (
+          <p className="text-[12.5px] italic text-muted-foreground">
+            no plugins advertised
+          </p>
+        ) : (
+          m.plugins.map((mp) => {
             const key = `${mp.name}@${m.name}`;
             return (
               <MarketRow
@@ -1838,9 +2288,9 @@ function MarketplaceView({
                 onOpen={() => onOpenPlugin(mp.name, m.name)}
               />
             );
-          })}
-        </Section>
-      ))}
+          })
+        )}
+      </Section>
     </div>
   );
 }
@@ -1852,6 +2302,8 @@ function PluginDetailView({
   installing,
   error,
   onInstall,
+  onUpdate,
+  onUninstall,
   onBack,
   backLabel,
 }: {
@@ -1861,6 +2313,8 @@ function PluginDetailView({
   installing: boolean;
   error?: string;
   onInstall: (plugin: string, marketplace: string) => void;
+  onUpdate: () => Promise<{ ok: boolean; error?: string }>;
+  onUninstall: () => Promise<{ ok: boolean; error?: string }>;
   onBack: () => void;
   backLabel: string;
 }) {
@@ -1903,45 +2357,15 @@ function PluginDetailView({
         )}
       </header>
 
-      <div className="flex items-center gap-2">
-        {isInstalled ? (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[10px] tracking-[0.22em] uppercase ring-1",
-              enabled
-                ? "ring-[color:var(--matcha-soft)] text-[color:var(--primary)] bg-[color:var(--matcha-soft)]/50"
-                : "ring-border/70 text-muted-foreground"
-            )}
-          >
-            {enabled ? "installed · enabled" : "installed · disabled"}
-          </span>
-        ) : (
-          <button
-            type="button"
-            disabled={installing}
-            onClick={() => onInstall(pluginName, marketplace)}
-            className={cn(
-              "inline-flex items-center gap-1.5 h-7 px-3 rounded-md bg-background ring-1 transition text-[10px] tracking-[0.22em] uppercase disabled:opacity-40",
-              error
-                ? "ring-[color:var(--clay)]/40 text-[color:var(--clay)] hover:ring-[color:var(--clay)]/70"
-                : "ring-border/70 text-foreground hover:ring-border"
-            )}
-          >
-            {installing ? "installing…" : error ? "Retry install" : (
-              <>
-                <Plus className="w-3 h-3" strokeWidth={1.8} />
-                Install
-              </>
-            )}
-          </button>
-        )}
-      </div>
-
-      {error && (
-        <p className="text-[11px] leading-snug text-[color:var(--clay)]/90">
-          {error}
-        </p>
-      )}
+      <PluginActions
+        isInstalled={isInstalled}
+        enabled={enabled}
+        installing={installing}
+        installError={error}
+        onInstall={() => onInstall(pluginName, marketplace)}
+        onUpdate={onUpdate}
+        onUninstall={onUninstall}
+      />
 
       {description && (
         <section>
@@ -1978,6 +2402,146 @@ function PluginDetailView({
         )}
       </section>
     </div>
+  );
+}
+
+// PluginActions: Install (when not installed) or Update + Uninstall
+// (when installed). Two-step uninstall — first click arms, second
+// commits — matching the sidebar delete pattern.
+function PluginActions({
+  isInstalled,
+  enabled,
+  installing,
+  installError,
+  onInstall,
+  onUpdate,
+  onUninstall,
+}: {
+  isInstalled: boolean;
+  enabled: boolean;
+  installing: boolean;
+  installError?: string;
+  onInstall: () => void;
+  onUpdate: () => Promise<{ ok: boolean; error?: string }>;
+  onUninstall: () => Promise<{ ok: boolean; error?: string }>;
+}) {
+  const [updating, setUpdating] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  const update = async () => {
+    setUpdating(true);
+    setActionError(null);
+    const res = await onUpdate();
+    if (!res.ok) setActionError(res.error || "update failed");
+    setUpdating(false);
+  };
+
+  const uninstall = async () => {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setRemoving(true);
+    setActionError(null);
+    const res = await onUninstall();
+    if (!res.ok) {
+      setActionError(res.error || "uninstall failed");
+      setRemoving(false);
+      setArmed(false);
+    }
+  };
+
+  if (!isInstalled) {
+    return (
+      <>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={installing}
+            onClick={onInstall}
+            className={cn(
+              "inline-flex items-center gap-1.5 h-7 px-3 rounded-md bg-background ring-1 transition text-[10px] tracking-[0.22em] uppercase disabled:opacity-40",
+              installError
+                ? "ring-[color:var(--clay)]/40 text-[color:var(--clay)] hover:ring-[color:var(--clay)]/70"
+                : "ring-border/70 text-foreground hover:ring-border"
+            )}
+          >
+            {installing ? "installing…" : installError ? "Retry install" : (
+              <>
+                <Plus className="w-3 h-3" strokeWidth={1.8} />
+                Install
+              </>
+            )}
+          </button>
+        </div>
+        {installError && (
+          <p className="text-[11px] leading-snug text-[color:var(--clay)]/90">
+            {installError}
+          </p>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-[10px] tracking-[0.22em] uppercase ring-1",
+            enabled
+              ? "ring-[color:var(--matcha-soft)] text-[color:var(--primary)] bg-[color:var(--matcha-soft)]/50"
+              : "ring-border/70 text-muted-foreground"
+          )}
+        >
+          {enabled ? "installed · enabled" : "installed · disabled"}
+        </span>
+        <button
+          type="button"
+          onClick={update}
+          disabled={updating || removing}
+          className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md bg-background ring-1 ring-border/70 hover:ring-border text-[10px] tracking-[0.22em] uppercase text-foreground transition disabled:opacity-60"
+        >
+          {updating ? (
+            <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+          ) : (
+            <Sparkles className="w-3 h-3" strokeWidth={1.8} />
+          )}
+          Update
+        </button>
+        <button
+          type="button"
+          onClick={uninstall}
+          disabled={updating || removing}
+          className={cn(
+            "inline-flex items-center gap-1.5 h-7 px-3 rounded-md ring-1 transition text-[10px] tracking-[0.22em] uppercase disabled:opacity-60",
+            armed
+              ? "ring-[color:var(--clay)]/60 text-[color:var(--clay)] bg-[color:var(--clay-soft)]/40"
+              : "ring-border/70 text-muted-foreground hover:text-foreground hover:ring-border bg-background"
+          )}
+        >
+          {removing ? (
+            <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
+          ) : (
+            <Trash2 className="w-3 h-3" strokeWidth={1.8} />
+          )}
+          {armed ? "Confirm" : "Uninstall"}
+        </button>
+      </div>
+      {actionError && (
+        <p className="text-[11px] leading-snug text-[color:var(--clay)]/90 whitespace-pre-wrap break-words">
+          {actionError}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -2134,45 +2698,6 @@ function CredentialField({
         <p className="mt-1 text-[11px] text-[color:var(--clay)]/90">{error}</p>
       )}
     </div>
-  );
-}
-
-function BrowseEntry({
-  totalAvailable,
-  totalPlugins,
-  onClick,
-}: {
-  totalAvailable: number;
-  totalPlugins: number;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group w-full flex items-center gap-3 px-3.5 py-3 rounded-xl bg-background ring-1 ring-border/60 hover:ring-border transition-colors text-left"
-    >
-      <div className="shrink-0 w-8 h-8 rounded-lg bg-[color:var(--matcha-soft)] flex items-center justify-center">
-        <Store
-          className="text-[color:var(--primary)]"
-          size={14}
-          strokeWidth={1.8}
-        />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-foreground">
-          Marketplace
-        </div>
-        <div className="text-[11px] text-muted-foreground font-mono">
-          {totalAvailable} available · {totalPlugins} total
-        </div>
-      </div>
-      <ChevronRight
-        className="shrink-0 text-muted-foreground group-hover:text-foreground transition-colors"
-        size={14}
-        strokeWidth={1.8}
-      />
-    </button>
   );
 }
 
