@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -220,8 +220,20 @@ export function App() {
         <Sidebar
           agents={agents}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          onSelect={(id) => {
+            setSelectedId(id);
+            // The director/dispatcher has no Skills/Artifact/Schedules
+            // sheets — close any that were open from a previous agent
+            // so the chat takes the full width as expected.
+            const next = agents?.find((a) => a.id === id);
+            if (next?.kind === "dispatcher") {
+              panel.close();
+              artifactPanel.close();
+              schedulesPanel.close();
+            }
+          }}
           collapsed={!sidebar.open}
+          onToggle={sidebar.toggle}
         />
       </div>
       <div className="flex-1 min-w-0">
@@ -268,7 +280,7 @@ function KindGlyph({ kind, size = 18 }: { kind: string; size?: number }) {
   const map: Record<string, { fg: string; Icon: typeof Workflow; filled?: boolean; stroke?: number }> = {
     dispatcher: { fg: "text-[color:var(--clay)]", Icon: Navigation, filled: true, stroke: 2.4 },
     orchestrator: { fg: "text-[color:var(--primary)]", Icon: Layers },
-    worker: { fg: "text-muted-foreground", Icon: ArrowUpRight },
+    worker: { fg: "text-muted-foreground", Icon: CornerDownRight },
   };
   const s = map[kind] ?? map.worker;
   const Icon = s.Icon;
@@ -357,13 +369,16 @@ function Sidebar({
   selectedId,
   onSelect,
   collapsed = false,
+  onToggle,
 }: {
   agents: Agent[] | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
   collapsed?: boolean;
+  onToggle: () => void;
 }) {
   const tree = useMemo(() => buildTree(agents ?? []), [agents]);
+  const ToggleIcon = collapsed ? PanelLeft : PanelLeftClose;
 
   if (collapsed) {
     // Rail mode: tiny serif "f" anchor up top (so the brand doesn't
@@ -376,7 +391,7 @@ function Sidebar({
             f
           </span>
         </div>
-        <div className="flex flex-col items-center gap-1 pb-6">
+        <div className="flex-1 min-h-0 flex flex-col items-center gap-1 px-1 pt-1 pb-6 overflow-y-auto">
           {ordered.map((a) => (
             <button
               key={a.id}
@@ -394,6 +409,16 @@ function Sidebar({
             </button>
           ))}
         </div>
+        <div className="flex items-center justify-center pb-4">
+          <button
+            type="button"
+            onClick={onToggle}
+            title="Expand fleet"
+            className="text-muted-foreground hover:text-foreground transition-colors p-2"
+          >
+            <ToggleIcon className="w-4 h-4" strokeWidth={1.8} />
+          </button>
+        </div>
       </aside>
     );
   }
@@ -402,7 +427,7 @@ function Sidebar({
     <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px] select-none">
       <div className="px-8 pt-10 pb-6">
         <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
-          flow
+          director
         </h1>
       </div>
       <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pt-1 pb-8 space-y-2">
@@ -421,6 +446,16 @@ function Sidebar({
             onSelect={onSelect}
           />
         ))}
+      </div>
+      <div className="flex items-center justify-end px-4 pb-4">
+        <button
+          type="button"
+          onClick={onToggle}
+          title="Collapse fleet"
+          className="text-muted-foreground hover:text-foreground transition-colors p-2"
+        >
+          <ToggleIcon className="w-4 h-4" strokeWidth={1.8} />
+        </button>
       </div>
     </aside>
   );
@@ -467,8 +502,13 @@ function AgentNode({
   //   stopped/dead/not-found → no indicator (the user can still send;
   //                            notify auto-resumes)
   const isStreaming = agent.status === "streaming";
+  // Workers never directly ask the user — their parent orch handles
+  // anything user-facing. A worker that's hit a permission/trust prompt
+  // is a stuck-on-itself problem the orch needs to recover from, not
+  // something to ping the user about.
   const needsAttention =
-    agent.status === "trust-dialog" || agent.status === "permission-dialog";
+    !isWorker &&
+    (agent.status === "trust-dialog" || agent.status === "permission-dialog");
 
   // Visual hierarchy: dispatch and orchestrators sit at the same
   // root indent (workers under their orchestrator stay nested). The
@@ -491,7 +531,12 @@ function AgentNode({
       <button
         type="button"
         onClick={() => onSelect(agent.id)}
-        className="w-full text-left flex items-center gap-2.5 px-2.5 py-1.5"
+        className={cn(
+          "w-full text-left flex items-center gap-2.5 py-1.5 pl-2.5 transition-[padding-right]",
+          // Reserve room for the inline delete button so the label
+          // truncates earlier and never sits under the trash icon.
+          isSelected && !isDispatcher ? "pr-9" : "pr-2.5"
+        )}
       >
         <KindGlyph kind={agent.kind} />
         <div className="min-w-0 flex-1 flex items-center gap-2">
@@ -507,7 +552,7 @@ function AgentNode({
           {needsAttention && (
             <span
               title="needs your attention"
-              className="shrink-0 w-1.5 h-1.5 rounded-full bg-[color:var(--clay)] animate-soft-pulse"
+              className="shrink-0 w-1.5 h-1.5 rounded-full bg-[color:var(--clay)]"
             />
           )}
         </div>
@@ -569,7 +614,7 @@ function Detail({
 }) {
   if (!agent) {
     return (
-      <section className="flex flex-col h-full min-h-0">
+      <section className="relative flex flex-col h-full min-h-0">
         <TopNav
           agent={null}
           panelOpen={panelOpen}
@@ -581,14 +626,14 @@ function Detail({
           sidebarOpen={sidebarOpen}
           onToggleSidebar={onToggleSidebar}
         />
-        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm italic">
+        <div className="flex-1 flex items-center justify-center pt-16 text-muted-foreground text-sm italic">
           select one
         </div>
       </section>
     );
   }
   return (
-    <section className="flex flex-col h-full min-h-0">
+    <section className="relative flex flex-col h-full min-h-0">
       <TopNav
         agent={agent}
         panelOpen={panelOpen}
@@ -653,22 +698,20 @@ function TopNav({
   const SettingsIcon = panelOpen ? PanelRightClose : PanelRight;
   const SidebarIcon = sidebarOpen ? PanelLeftClose : PanelLeft;
   return (
-    <div className="@container flex items-center justify-between gap-5 px-10 pt-8 pb-2">
-      <button
-        type="button"
-        onClick={onToggleSidebar}
-        title={sidebarOpen ? "Collapse fleet" : "Expand fleet"}
-        className="text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <SidebarIcon className="w-4 h-4" strokeWidth={1.8} />
-      </button>
+    <div className="@container absolute top-0 left-0 right-0 z-20 flex items-center justify-end gap-5 px-10 pt-8 pb-3 bg-background/[0.03] backdrop-blur-[2px]">
       <div className="flex items-center justify-end gap-5">
-        {agent && <BrowserButton agent={agent} />}
-        {agent && <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />}
-        {agent && (
+        {/* Workers inherit their orch's browser, schedules, plugins —
+            none of those are user-actionable at the worker level. Keep
+            the worker's top bar empty so it reads as a focused
+            execution view. */}
+        {agent && agent.kind !== "worker" && <BrowserButton agent={agent} />}
+        {agent && agent.kind !== "worker" && (
+          <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />
+        )}
+        {agent && agent.kind !== "worker" && (
           <SchedulesNavButton agent={agent} open={schedulesPanelOpen} onToggle={onToggleSchedulesPanel} />
         )}
-        {agent?.kind !== "dispatcher" && (
+        {agent?.kind === "orchestrator" && (
           <button
             type="button"
             onClick={onTogglePanel}
@@ -876,7 +919,7 @@ function MessageStream({
   const hidden = filtered.length - visible.length;
 
   return (
-    <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
+    <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-10 pt-20 pb-6">
       <div className="max-w-3xl mx-auto">
         <div className="mb-3">
           <KindGlyph kind={agent.kind} size={54} />
@@ -958,13 +1001,33 @@ function titleFor(a: Agent): string {
   return displayName(a);
 }
 
-// displayName aliases the underlying agent id for UI surfaces. The
-// dispatcher's role is to route requests to the right orchestrator,
-// so "director" reads better than "dispatch" in the sidebar / page
-// title — even though the on-disk id stays "dispatch".
+// displayName picks the friendliest label for UI surfaces:
+//   1. The agent's stored display_name (preferred — set at spawn time
+//      via `roster spawn --display-name "Host Reply"`).
+//   2. For the dispatcher, hard-coded "director".
+//   3. A humanized fallback derived from the id — strips legacy
+//      "orch-" / "-orch" decoration, swaps dashes for spaces,
+//      title-cases each word. Lets older agents that pre-date the
+//      display_name field still read clean.
 function displayName(a: Agent): string {
+  const stored = (a.display_name || "").trim();
+  if (stored) return stored;
   if (a.kind === "dispatcher") return "director";
-  return a.id;
+  return humanizeId(a.id);
+}
+
+function humanizeId(id: string): string {
+  // Strip the legacy "orch-" prefix or "-orch" suffix that the
+  // dispatcher used to add before display_name existed.
+  let s = id.replace(/^orch-/, "").replace(/-orch$/, "");
+  // dash/underscore → space; collapse runs of whitespace.
+  s = s.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  // Title-case each word. Single-letter words and short ones (≤3 chars)
+  // get fully uppercased so "fb"/"api"/"id" don't render as "Fb"/"Api".
+  return s
+    .split(" ")
+    .map((w) => (w.length <= 3 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)))
+    .join(" ");
 }
 
 // Anything past this many characters in a single message gets

@@ -2,6 +2,7 @@ export interface Agent {
   id: string;
   kind: "dispatcher" | "orchestrator" | "worker" | string;
   parent?: string;
+  display_name?: string;
   description?: string;
   session_uuid?: string;
   target?: string;

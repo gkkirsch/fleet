@@ -51,6 +51,7 @@ type Agent struct {
 	ID          string    `json:"id"`
 	Kind        string    `json:"kind"`
 	Parent      string    `json:"parent,omitempty"`
+	DisplayName string    `json:"display_name,omitempty"`
 	Description string    `json:"description,omitempty"`
 	SessionUUID string    `json:"session_uuid,omitempty"`
 	Target      string    `json:"target,omitempty"`
@@ -66,6 +67,7 @@ type rosterAgent struct {
 	ID          string    `json:"id"`
 	Kind        string    `json:"kind"`
 	Parent      string    `json:"parent"`
+	DisplayName string    `json:"display_name"`
 	Description string    `json:"description"`
 	SessionUUID string    `json:"session_uuid"`
 	SpawnArgs   []string  `json:"spawn_args"`
@@ -116,6 +118,7 @@ func loadAllAgents() ([]Agent, error) {
 			ID:          r.ID,
 			Kind:        r.Kind,
 			Parent:      r.Parent,
+			DisplayName: r.DisplayName,
 			Description: r.Description,
 			SessionUUID: r.SessionUUID,
 			Target:      r.Target,
