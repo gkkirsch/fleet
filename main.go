@@ -151,19 +151,18 @@ func camuxStatus(target string) string {
 
 // findJSONLPath returns the path of the JSONL file for a Claude session.
 //
-// We prefer the path that corresponds to the registered uuid, but if a
-// NEWER jsonl exists in the same project directory we return that one
-// instead — Claude Code rolls to a new session uuid whenever the user
-// runs /clear or otherwise resets, and roster's stored uuid lags behind.
-// Without this fallback the UI keeps watching a frozen file while live
-// turns land in a sibling jsonl the user can't see.
+// Always trust the registered uuid when its jsonl exists — multiple
+// agents (an orchestrator and its workers) commonly share a single
+// CLAUDE_CONFIG_DIR, so "newest in dir" can't disambiguate which
+// agent owns which session.
+//
+// Only when the registered file is gone (Claude Code rolled the
+// session via /clear and roster's stored uuid hasn't caught up yet)
+// do we fall back to the newest jsonl in the same project dir.
 //
 // Search order:
 //   1. Per-orch isolated dirs: <roster_data>/claude/*/projects/*/<uuid>.jsonl
 //   2. The user's global ~/.claude/projects/*/<uuid>.jsonl
-//
-// Then within whichever project dir we found, swap to the newest jsonl
-// if a newer one exists.
 func findJSONLPath(uuid, cwd string) string {
 	if uuid == "" {
 		return ""
@@ -171,24 +170,19 @@ func findJSONLPath(uuid, cwd string) string {
 	for _, base := range claudeProjectRoots() {
 		pattern := filepath.Join(base, "*", uuid+".jsonl")
 		matches, _ := filepath.Glob(pattern)
-		if len(matches) == 0 {
-			continue
+		if len(matches) > 0 {
+			return matches[0]
 		}
-		registered := matches[0]
-		// If a newer jsonl exists in the SAME project directory,
-		// prefer it — Claude Code rolls to a new uuid on /clear,
-		// and roster's stored uuid lags. We stay within the same
-		// directory as the registered file so we don't accidentally
-		// jump into another orch's isolated config dir.
-		projectDir := filepath.Dir(registered)
-		if newer := newestJSONL(projectDir); newer != "" && newer != registered {
-			ri, _ := os.Stat(registered)
-			ni, _ := os.Stat(newer)
-			if ri != nil && ni != nil && ni.ModTime().After(ri.ModTime()) {
+	}
+	// Registered file not found anywhere — try the newest jsonl in
+	// the project dir for the agent's cwd as a last-resort fallback.
+	if cwd != "" {
+		project := strings.ReplaceAll(cwd, "/", "-")
+		for _, base := range claudeProjectRoots() {
+			if newer := newestJSONL(filepath.Join(base, project)); newer != "" {
 				return newer
 			}
 		}
-		return registered
 	}
 	return ""
 }

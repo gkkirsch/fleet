@@ -104,12 +104,13 @@ type MarketPlugin struct {
 	Installed   bool   `json:"installed"`
 }
 
-// effectiveClaudeDir mirrors roster's claudeDirFor: orchestrators own a
-// dir under <XDG data>/roster/claude/<id>, workers inherit from their
-// nearest orchestrator ancestor, dispatchers fall back to ~/.claude.
+// effectiveClaudeDir mirrors roster's claudeDirFor: orchestrators and
+// dispatchers each own a dir under <XDG data>/roster/claude/<id>;
+// workers inherit from their nearest orchestrator ancestor; anything
+// else falls back to ~/.claude.
 func effectiveClaudeDir(a Agent, all []Agent) (dir, source, sourceID string) {
 	switch a.Kind {
-	case "orchestrator":
+	case "orchestrator", "dispatcher":
 		return orchClaudeDir(a.ID), "own", a.ID
 	case "worker":
 		orch := findOrchAncestor(a.Parent, all)

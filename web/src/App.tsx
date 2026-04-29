@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -264,17 +264,27 @@ export function App() {
 // Flat-icon variant of KindTile used in the sidebar tree. No bg square,
 // just the lucide glyph in a muted japandi tone — keeps the row visually
 // quieter so the agent's name/description carries the row.
-function KindGlyph({ kind }: { kind: string }) {
-  const map: Record<string, { fg: string; Icon: typeof Workflow }> = {
-    dispatcher: { fg: "text-[color:var(--clay)]", Icon: MessageCircle },
+function KindGlyph({ kind, size = 18 }: { kind: string; size?: number }) {
+  const map: Record<string, { fg: string; Icon: typeof Workflow; filled?: boolean; stroke?: number }> = {
+    dispatcher: { fg: "text-[color:var(--clay)]", Icon: Navigation, filled: true, stroke: 2.4 },
     orchestrator: { fg: "text-[color:var(--primary)]", Icon: Layers },
     worker: { fg: "text-muted-foreground", Icon: ArrowUpRight },
   };
   const s = map[kind] ?? map.worker;
   const Icon = s.Icon;
+  // Inner icon is ~83% of the square so the glyph reads at any size.
+  const inner = Math.round(size * 0.83);
   return (
-    <div className="w-[18px] h-[18px] flex-shrink-0 flex items-center justify-center">
-      <Icon className={s.fg} size={15} strokeWidth={1.7} />
+    <div
+      className="flex-shrink-0 flex items-center justify-center"
+      style={{ width: size, height: size }}
+    >
+      <Icon
+        className={s.fg}
+        size={inner}
+        strokeWidth={s.stroke ?? 1.7}
+        fill={s.filled ? "currentColor" : "none"}
+      />
     </div>
   );
 }
@@ -366,21 +376,21 @@ function Sidebar({
             f
           </span>
         </div>
-        <div className="flex flex-col items-center gap-1.5 pb-6">
+        <div className="flex flex-col items-center gap-1 pb-6">
           {ordered.map((a) => (
             <button
               key={a.id}
               type="button"
               onClick={() => onSelect(a.id)}
-              title={a.id}
+              title={displayName(a)}
               className={cn(
-                "rounded-lg p-1.5 transition-colors",
+                "rounded-md p-2 transition-colors",
                 a.id === selectedId
                   ? "bg-card shadow-sm ring-1 ring-border/70"
                   : "hover:bg-sidebar-accent/60"
               )}
             >
-              <KindTile kind={a.kind} size={24} />
+              <KindGlyph kind={a.kind} />
             </button>
           ))}
         </div>
@@ -395,7 +405,7 @@ function Sidebar({
           flow
         </h1>
       </div>
-      <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pb-8 space-y-2">
+      <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pt-1 pb-8 space-y-2">
         {agents === null && (
           <p className="text-muted-foreground text-sm px-4 py-6 italic">loading…</p>
         )}
@@ -489,9 +499,7 @@ function AgentNode({
             className={cn(
               "min-w-0 flex-1 text-[12.5px] tracking-tight truncate",
               isWorker ? "font-normal leading-snug" : "font-mono font-medium",
-              isStreaming
-                ? "text-[color:var(--ochre)] animate-soft-pulse"
-                : "text-foreground"
+              isStreaming ? "shimmer-text" : "text-foreground"
             )}
           >
             {primaryLabel}
@@ -598,6 +606,24 @@ function Detail({
         onSent={onSent}
         onInterrupted={onInterrupted}
         agentBusy={agent.status === "streaming" || isPending}
+        suggestions={
+          agent.kind === "dispatcher"
+            ? (() => {
+                const fromTurns = latestDispatcherSuggestions(messages);
+                if (fromTurns.length > 0) return fromTurns;
+                // Default bubbles only when the chat is truly empty —
+                // once the user has sent anything, leave the slot blank
+                // until the dispatcher emits its own.
+                const hasUser = messages.some(
+                  (m) =>
+                    m.role === "user" &&
+                    (m.text || "").trim() &&
+                    !isAgentRelay(m.text)
+                );
+                return hasUser ? [] : DEFAULT_DIRECTOR_SUGGESTIONS;
+              })()
+            : []
+        }
       />
     </section>
   );
@@ -642,15 +668,17 @@ function TopNav({
         {agent && (
           <SchedulesNavButton agent={agent} open={schedulesPanelOpen} onToggle={onToggleSchedulesPanel} />
         )}
-        <button
-          type="button"
-          onClick={onTogglePanel}
-          title={panelOpen ? "Hide skills panel" : "Show skills panel"}
-          className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
-        >
-          <span className="hidden @lg:inline">Skills</span>
-          <SettingsIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
-        </button>
+        {agent?.kind !== "dispatcher" && (
+          <button
+            type="button"
+            onClick={onTogglePanel}
+            title={panelOpen ? "Hide skills panel" : "Show skills panel"}
+            className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+          >
+            <span className="hidden @lg:inline">Skills</span>
+            <SettingsIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -851,7 +879,7 @@ function MessageStream({
     <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-10 pt-4 pb-6">
       <div className="max-w-3xl mx-auto">
         <div className="mb-3">
-          <KindTile kind={agent.kind} size={54} />
+          <KindGlyph kind={agent.kind} size={54} />
         </div>
         <h2 className="font-[family-name:var(--font-heading)] text-[56px] leading-[1.02] tracking-tight text-foreground mb-1">
           {titleFor(agent)}
@@ -887,7 +915,11 @@ function MessageStream({
               </div>
             )}
             {visible.map((m, i) => (
-              <MessageRow key={sliceStart + i} m={m} />
+              <MessageRow
+                key={sliceStart + i}
+                m={m}
+                agentKind={agent.kind}
+              />
             ))}
             {isStreaming && <ThinkingRow agent={agent} />}
           </div>
@@ -912,11 +944,8 @@ function ThinkingRow({ agent }: { agent: Agent }) {
   }, []);
 
   return (
-    <div className="flex items-center gap-3">
-      <KindTile kind={agent.kind} size={34} />
-      <div className="px-5 py-3 text-[15px]">
-        <span className="shimmer-text font-medium">{current}…</span>
-      </div>
+    <div className="px-5 py-3 text-[15px]">
+      <span className="shimmer-text font-medium">{current}…</span>
     </div>
   );
 }
@@ -975,10 +1004,30 @@ function ClippedMarkdown({ text }: { text: string }) {
   );
 }
 
-function MessageRow({ m }: { m: Message }) {
+function MessageRow({ m, agentKind }: { m: Message; agentKind?: string }) {
   // Two sides: user on the right (our side), assistant/agent on the left.
   // Tool blocks render centered, inline, in a muted style.
   if (m.role === "user") {
+    const sender = agentRelaySender(m.text);
+    // The dispatcher is the user-facing surface; cross-agent chatter
+    // is noise there. In every OTHER pane (orchestrator, worker) the
+    // inbound relay IS the task, so render it with a small "from X"
+    // caption to keep it visually distinct from raw user input.
+    if (sender) {
+      if (agentKind === "dispatcher") return null;
+      const body = relayBody(m.text);
+      if (!body.trim()) return null;
+      return (
+        <div className="flex flex-col items-end gap-1.5">
+          <div className="max-w-[78%] rounded-[20px] rounded-br-md px-5 py-3 bg-secondary/70 text-foreground text-[15px] leading-relaxed break-words">
+            <div className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground mb-1.5">
+              from {sender}
+            </div>
+            <ClippedMarkdown text={body} />
+          </div>
+        </div>
+      );
+    }
     const cleaned = cleanUserText(m.text || "");
     const { stripped, paths } = extractAttachments(cleaned);
     const hasText = stripped.trim().length > 0;
@@ -1007,12 +1056,16 @@ function MessageRow({ m }: { m: Message }) {
     );
   }
   if (m.role === "assistant") {
+    // Strip the dispatcher's <suggestions> block — it's rendered as
+    // bubbles above the input, not inline in the chat.
+    const visible = extractSuggestions(m.text).text;
+    if (!visible.trim()) return null;
     // Left indent matches the input box's text start (NotifyBox textarea
     // px-5 inside the same max-w-3xl column) so the conversation reads
     // along a single column edge.
     return (
       <div className="max-w-[78%] pl-5 py-1 text-foreground text-[15px] leading-relaxed break-words">
-        <ClippedMarkdown text={m.text || ""} />
+        <ClippedMarkdown text={visible} />
       </div>
     );
   }
@@ -1211,13 +1264,97 @@ function attachmentDisplayName(p: string): string {
 function cleanUserText(text?: string): string {
   if (!text) return "";
   return text
-    // Strip the "[from sender]\n\n" prefix roster prepends on delivery.
+    // Legacy: strip the "[from sender]\n\n" prefix roster used to
+    // prepend (replaced by <from id="…"> wrapping; kept for old logs).
     .replace(/^\[from [^\]]+\]\n\n/, "")
-    // Strip the "— \nTo respond, end your turn…" reply footer roster appends
-    // when a registered agent sends the message.
+    // Legacy reply-protocol footer.
     .replace(/\n*—\nTo respond,[\s\S]*$/m, "")
     .trim();
 }
+
+// isAgentRelay returns true when a "user" turn is actually a peer-to-
+// peer notify from another roster agent. Modern: <from id="...">…</from>
+// wrapping. Legacy: a "[from <id>]\n\n…" prefix from older roster
+// versions.
+function isAgentRelay(text?: string): boolean {
+  return !!agentRelaySender(text);
+}
+
+const FROM_TAG_RE = /^<from\s+id="([^"]+)">([\s\S]*?)<\/from>\s*$/m;
+const FROM_PREFIX_RE = /^\[from ([^\]]+)\]\n\n([\s\S]*)$/;
+
+// agentRelaySender returns the sender id when text is an inter-agent
+// relay, or null when it's plain user input.
+function agentRelaySender(text?: string): string | null {
+  if (!text) return null;
+  const t = text.trim();
+  const m = t.match(FROM_TAG_RE);
+  if (m) return m[1];
+  const m2 = t.match(FROM_PREFIX_RE);
+  if (m2) return m2[1];
+  return null;
+}
+
+// relayBody returns the inner content of a wrapped or prefixed relay,
+// minus the reply-protocol footer roster appends. Empty string if the
+// text isn't a relay.
+function relayBody(text?: string): string {
+  if (!text) return "";
+  const t = text.trim();
+  const m = t.match(FROM_TAG_RE);
+  let inner = "";
+  if (m) {
+    inner = m[2];
+  } else {
+    const m2 = t.match(FROM_PREFIX_RE);
+    if (m2) inner = m2[2];
+    else return "";
+  }
+  return inner
+    .replace(/\n*—?\n?To respond,[\s\S]*$/m, "")
+    .trim();
+}
+
+// extractSuggestions pulls a `<suggestions>...</suggestions>` block out
+// of an assistant turn. Returns the suggestion lines (one per line in
+// the block, blanks dropped) and the text with that block stripped so
+// it doesn't render in the chat. The dispatcher's prompt teaches it to
+// emit this; orchestrators don't, so this is a no-op for them.
+const SUGGESTIONS_RE = /<suggestions>([\s\S]*?)<\/suggestions>\s*$/i;
+function extractSuggestions(raw?: string): { text: string; suggestions: string[] } {
+  if (!raw) return { text: "", suggestions: [] };
+  const m = raw.match(SUGGESTIONS_RE);
+  if (!m) return { text: raw, suggestions: [] };
+  const lines = m[1]
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+  return { text: raw.replace(SUGGESTIONS_RE, "").trimEnd(), suggestions: lines };
+}
+
+// latestDispatcherSuggestions walks the message stream backwards and
+// returns the suggestion list from the most recent assistant turn that
+// emitted one. Returns [] if no turn yet had suggestions — the UI then
+// falls back to its default bubbles.
+function latestDispatcherSuggestions(messages: Message[]): string[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant" || !m.text) continue;
+    const { suggestions } = extractSuggestions(m.text);
+    if (suggestions.length > 0) return suggestions;
+  }
+  return [];
+}
+
+// Default bubbles for the empty director chat. Wording is what the
+// user would actually type — not labels and not directives at the
+// system. The dispatcher overrides these the moment it replies.
+const DEFAULT_DIRECTOR_SUGGESTIONS = [
+  "i have an idea i want to explore",
+  "interview me — i'm not sure what to build",
+  "what's already running for me?",
+];
 
 // ─── notify ──────────────────────────────────────────────────────
 
@@ -1233,11 +1370,13 @@ function NotifyBox({
   onSent,
   onInterrupted,
   agentBusy,
+  suggestions = [],
 }: {
   agentId: string;
   onSent: (id: string) => void;
   onInterrupted: (id: string) => void;
   agentBusy: boolean;
+  suggestions?: string[];
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -1372,6 +1511,23 @@ function NotifyBox({
   return (
     <div className="px-10 pb-8 pt-4">
       <div className="max-w-3xl mx-auto">
+        {suggestions.length > 0 && !text.trim() && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => {
+                  setText(s);
+                  textRef.current?.focus();
+                }}
+                className="text-[12px] px-3 py-1.5 rounded-full bg-card ring-1 ring-border/60 hover:ring-border hover:bg-secondary transition text-muted-foreground hover:text-foreground"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
         <div
           onDragOver={(e) => {
             e.preventDefault();
