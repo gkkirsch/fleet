@@ -536,7 +536,28 @@ func handleNotify(w http.ResponseWriter, r *http.Request, id string) {
 		from = "ui"
 	}
 
-	// Self-heal: if the recipient is parked on a permission/trust prompt,
+	// Self-heal #1: if the recipient is stopped, resume it. Sending a
+	// message to a stopped orch was previously a hard error; the user's
+	// intent is clearly "talk to this thing" so we boot it for them.
+	if a, _ := loadAgentMerged(id); a != nil && a.Status == "stopped" {
+		out, err := exec.Command(rosterBin, "resume", id).CombinedOutput()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("resume %s: %v — %s", id, err, strings.TrimSpace(string(out))), http.StatusInternalServerError)
+			return
+		}
+		// Wait for the agent to actually become ready before piping the
+		// message in — otherwise roster's notify will fail its own
+		// waitForReady. 30s cap matches roster's internal timeout.
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			if a, _ := loadAgentMerged(id); a != nil && a.Status == "ready" {
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+	}
+
+	// Self-heal #2: if the recipient is parked on a permission/trust prompt,
 	// roster's notify will time out waiting for "ready". Sending Esc
 	// dismisses the prompt and returns Claude Code to the input prompt,
 	// which is what the user implicitly wants when they're typing a new

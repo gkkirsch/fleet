@@ -451,14 +451,14 @@ function AgentNode({
   // the worker has one; otherwise fall back to the name.
   const primaryLabel =
     isWorker && agent.description ? agent.description : displayName(agent);
-  const stateHint =
-    agent.status === "streaming"
-      ? "streaming"
-      : agent.status === "trust-dialog" || agent.status === "permission-dialog"
-      ? "waiting for you"
-      : agent.status === "stopped" || agent.status === "not-found" || agent.status === "dead"
-      ? "stopped"
-      : null;
+  // Status is conveyed by the row itself, not a second line:
+  //   streaming           → shimmer the label
+  //   permission/trust    → clay notification dot
+  //   stopped/dead/not-found → no indicator (the user can still send;
+  //                            notify auto-resumes)
+  const isStreaming = agent.status === "streaming";
+  const needsAttention =
+    agent.status === "trust-dialog" || agent.status === "permission-dialog";
 
   // Visual hierarchy: dispatch and orchestrators sit at the same
   // root indent (workers under their orchestrator stay nested). The
@@ -484,30 +484,23 @@ function AgentNode({
         className="w-full text-left flex items-center gap-2.5 px-2.5 py-1.5"
       >
         <KindGlyph kind={agent.kind} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 flex items-center gap-2">
           <div
             className={cn(
-              "text-[12.5px] tracking-tight text-foreground truncate",
-              isWorker
-                ? "font-normal leading-snug"
-                : "font-mono font-medium"
+              "min-w-0 flex-1 text-[12.5px] tracking-tight truncate",
+              isWorker ? "font-normal leading-snug" : "font-mono font-medium",
+              isStreaming
+                ? "text-[color:var(--ochre)] animate-soft-pulse"
+                : "text-foreground"
             )}
           >
             {primaryLabel}
           </div>
-          {stateHint && (
-            <div
-              className={cn(
-                "text-[10.5px] mt-0.5 tracking-wide",
-                agent.status === "streaming"
-                  ? "text-[color:var(--ochre)] animate-soft-pulse"
-                  : agent.status === "trust-dialog" || agent.status === "permission-dialog"
-                  ? "text-[color:var(--clay)]"
-                  : "text-muted-foreground"
-              )}
-            >
-              {stateHint}
-            </div>
+          {needsAttention && (
+            <span
+              title="needs your attention"
+              className="shrink-0 w-1.5 h-1.5 rounded-full bg-[color:var(--clay)] animate-soft-pulse"
+            />
           )}
         </div>
       </button>
