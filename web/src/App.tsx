@@ -209,6 +209,14 @@ export function App() {
 
   const isPending = selected ? !!pendingSends[selected.id] : false;
 
+  // Skills panel is orchestrator-only: the dispatcher / director has no
+  // skills (it's a router). Gate the rendered "open" state on agent
+  // kind so first launch — which selects the dispatcher by default —
+  // doesn't show an empty skills drawer. The user's stored preference
+  // (panel.open) is preserved and applies again as soon as they
+  // navigate to an orchestrator.
+  const skillsPanelOpen = panel.open && selected?.kind === "orchestrator";
+
   return (
     <div className="h-screen flex bg-background text-foreground">
       <div
@@ -243,7 +251,7 @@ export function App() {
           isPending={isPending}
           onSent={markPending}
           onInterrupted={clearPending}
-          panelOpen={panel.open}
+          panelOpen={skillsPanelOpen}
           onTogglePanel={toggleSettings}
           artifactPanelOpen={artifactPanel.open}
           onToggleArtifactPanel={toggleArtifact}
@@ -255,7 +263,7 @@ export function App() {
       </div>
       <ThreadPanel
         agent={selected}
-        open={panel.open}
+        open={skillsPanelOpen}
       />
       <ArtifactPanel
         agent={selected}
