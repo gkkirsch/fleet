@@ -401,17 +401,52 @@ function Sidebar({
   onToggle: () => void;
 }) {
   const tree = useMemo(() => buildTree(agents ?? []), [agents]);
+  // The dispatcher is rendered as the brand mark / wordmark up top —
+  // it doesn't need a sidebar tile of its own. Promote its children
+  // (the orchestrators) to roots in the visible list so the user
+  // still sees the rest of the fleet.
+  const visibleRoots = useMemo(() => {
+    const out: Agent[] = [];
+    for (const r of tree.roots) {
+      if (r.kind === "dispatcher") {
+        out.push(...(tree.children.get(r.id) ?? []));
+      } else {
+        out.push(r);
+      }
+    }
+    return out;
+  }, [tree]);
+  const dispatcher = (agents ?? []).find((a) => a.kind === "dispatcher");
+  const onSelectDispatcher = useCallback(() => {
+    if (dispatcher) onSelect(dispatcher.id);
+  }, [dispatcher, onSelect]);
   const ToggleIcon = collapsed ? PanelLeft : PanelLeftClose;
 
   if (collapsed) {
-    // Rail mode: brand mark anchor up top (so the brand doesn't
-    // disappear with the nav) + clickable kind tiles stacked below.
-    const ordered = flattenTree(tree);
+    // Rail mode: brand mark up top doubles as the dispatcher tile
+    // (clicking it selects the dispatcher / "Director" view), then
+    // orchestrator + worker tiles stacked below.
+    const ordered = visibleRoots.flatMap((r) => {
+      const out: Agent[] = [r];
+      const walk = (a: Agent) => {
+        for (const k of tree.children.get(a.id) ?? []) {
+          out.push(k);
+          walk(k);
+        }
+      };
+      walk(r);
+      return out;
+    });
     return (
       <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center overflow-hidden select-none">
-        <div className="pt-10 pb-5">
+        <button
+          type="button"
+          onClick={onSelectDispatcher}
+          title={dispatcher ? "Director" : undefined}
+          className="mt-10 mb-3 appearance-none border-0 bg-transparent hover:bg-sidebar-accent/60 rounded-md p-2 transition-colors cursor-pointer"
+        >
           <DirectorMark className="h-6 w-auto" />
-        </div>
+        </button>
         <div className="flex-1 min-h-0 flex flex-col items-center gap-1 px-1 pt-1 pb-6 overflow-y-auto">
           {ordered.map((a) => (
             <button
@@ -446,14 +481,19 @@ function Sidebar({
 
   return (
     <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px] select-none">
-      <div className="px-8 pt-10 pb-6">
+      <button
+        type="button"
+        onClick={onSelectDispatcher}
+        title={dispatcher ? "Open the Director chat" : undefined}
+        className="block w-full text-left appearance-none border-0 bg-transparent hover:bg-sidebar-accent/30 px-8 pt-10 pb-6 transition-colors cursor-pointer"
+      >
         <div className="flex items-center gap-3">
           <DirectorMark className="h-[28px] w-auto shrink-0" />
           <h1 className="font-[family-name:var(--font-heading)] text-[36px] leading-none tracking-tight text-foreground">
             director
           </h1>
         </div>
-      </div>
+      </button>
       <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pt-1 pb-8 space-y-2">
         {agents === null && (
           <p className="text-muted-foreground text-sm px-4 py-6 italic">loading…</p>
@@ -461,7 +501,7 @@ function Sidebar({
         {agents !== null && agents.length === 0 && (
           <p className="text-muted-foreground text-sm px-4 py-6">no agents yet</p>
         )}
-        {tree.roots.map((a) => (
+        {visibleRoots.map((a) => (
           <AgentNode
             key={a.id}
             agent={a}
