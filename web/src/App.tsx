@@ -737,8 +737,7 @@ function TopNav({
         {/* Workers inherit their orch's browser, schedules, plugins —
             none of those are user-actionable at the worker level. Keep
             the worker's top bar empty so it reads as a focused
-            execution view. Health is system-wide and always shown. */}
-        <DoctorButton />
+            execution view. */}
         {agent && agent.kind !== "worker" && <BrowserButton agent={agent} />}
         {agent && agent.kind !== "worker" && (
           <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />
