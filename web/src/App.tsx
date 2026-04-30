@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { Activity, AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -543,11 +543,17 @@ function AgentNode({
           <div
             className={cn(
               "min-w-0 flex-1 text-[12.5px] tracking-tight truncate",
-              isWorker ? "font-normal leading-snug" : "font-mono font-medium",
-              isStreaming ? "shimmer-text" : "text-foreground"
+              isWorker ? "font-normal leading-snug" : "font-mono font-medium"
             )}
           >
-            {primaryLabel}
+            {/* Shimmer must live on an inner span — when applied to the
+                same element as `truncate`, WebKit's text-overflow:ellipsis
+                fights with background-clip:text and the gradient renders
+                transparent. Workers especially: their long descriptions
+                always truncate, so the shimmer was invisible. */}
+            <span className={isStreaming ? "shimmer-text" : "text-foreground"}>
+              {primaryLabel}
+            </span>
           </div>
           {needsAttention && (
             <span
@@ -703,7 +709,8 @@ function TopNav({
         {/* Workers inherit their orch's browser, schedules, plugins —
             none of those are user-actionable at the worker level. Keep
             the worker's top bar empty so it reads as a focused
-            execution view. */}
+            execution view. Health is system-wide and always shown. */}
+        <DoctorButton />
         {agent && agent.kind !== "worker" && <BrowserButton agent={agent} />}
         {agent && agent.kind !== "worker" && (
           <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />
@@ -734,6 +741,127 @@ type BrowserState = {
   error?: string;
   loading: boolean;
 };
+
+// DoctorButton runs `roster doctor --json` and shows a small dropdown
+// with the report. The icon goes amber if any check is non-OK, red if
+// any check is failed. Click opens the dropdown; "Fix safe issues"
+// re-runs with --fix and refreshes.
+type DoctorCheck = { level: "ok" | "warn" | "fail"; title: string; detail?: string };
+type DoctorReport = { failed: number; checks: DoctorCheck[] };
+
+function DoctorButton() {
+  const [report, setReport] = useState<DoctorReport | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async (fix = false) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/doctor${fix ? "?fix=1" : ""}`);
+      const d: DoctorReport = await r.json();
+      setReport(d);
+    } catch {
+      setReport({ failed: 1, checks: [{ level: "fail", title: "doctor request failed" }] });
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const tone = useMemo(() => {
+    if (!report) return "text-muted-foreground";
+    if (report.failed > 0) return "text-[var(--clay)]";
+    if (report.checks.some((c) => c.level === "warn")) return "text-[var(--ochre)]";
+    return "text-[var(--matcha)]";
+  }, [report]);
+
+  const tooltip = !report
+    ? "Health: loading…"
+    : report.failed > 0
+      ? `${report.failed} failed check${report.failed === 1 ? "" : "s"}`
+      : report.checks.some((c) => c.level === "warn")
+        ? "Some warnings — click to see details"
+        : "All checks passing";
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={tooltip}
+        className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+      >
+        <span className="hidden @lg:inline">Health</span>
+        {busy ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.8} />
+        ) : (
+          <Activity className={`w-3.5 h-3.5 ${tone}`} strokeWidth={1.8} />
+        )}
+      </button>
+      {open && report && (
+        <div className="absolute right-0 top-full mt-2 w-[400px] max-h-[600px] overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-md z-30">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+            <span className="text-[11px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
+              roster doctor
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => refresh(true)}
+                disabled={busy}
+                className="text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                Fix safe
+              </button>
+              <button
+                type="button"
+                onClick={() => refresh(false)}
+                disabled={busy}
+                className="text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                Refresh
+              </button>
+              <button type="button" onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <XIcon className="w-3 h-3" strokeWidth={1.8} />
+              </button>
+            </div>
+          </div>
+          <div className="p-2 space-y-1">
+            {report.checks.map((c, i) => (
+              <DoctorCheckRow key={i} check={c} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DoctorCheckRow({ check }: { check: DoctorCheck }) {
+  const mark = check.level === "ok" ? "✓" : check.level === "warn" ? "⚠" : "✗";
+  const tone =
+    check.level === "ok"
+      ? "text-[var(--matcha)]"
+      : check.level === "warn"
+        ? "text-[var(--ochre)]"
+        : "text-[var(--clay)]";
+  return (
+    <div className="px-2 py-1.5 rounded-sm hover:bg-muted/40">
+      <div className="flex items-start gap-2">
+        <span className={`text-sm leading-none mt-0.5 ${tone}`}>{mark}</span>
+        <span className="text-[12px] font-medium">{check.title}</span>
+      </div>
+      {check.detail && (
+        <pre className="mt-1 ml-5 text-[11px] text-muted-foreground whitespace-pre-wrap font-mono leading-snug">
+          {check.detail}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 function BrowserButton({ agent }: { agent: Agent }) {
   const [state, setState] = useState<BrowserState>({ alive: false, loading: false });

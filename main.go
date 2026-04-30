@@ -642,6 +642,26 @@ func runRosterForget(id string) error {
 	return nil
 }
 
+// handleDoctor proxies `roster doctor [--fix] --json` so the UI can
+// surface a system health panel. Non-zero roster exit means at least
+// one check failed — we still return 200 with the body so the UI can
+// render the failure detail; failure is signaled by `failed > 0` in
+// the JSON.
+func handleDoctor(w http.ResponseWriter, r *http.Request) {
+	args := []string{"doctor", "--json"}
+	if r.URL.Query().Get("fix") == "1" {
+		args = append(args, "--fix")
+	}
+	cmd := exec.Command(rosterBin, args...)
+	out, _ := cmd.CombinedOutput()
+	w.Header().Set("Content-Type", "application/json")
+	if len(out) == 0 {
+		_, _ = w.Write([]byte(`{"failed":1,"checks":[{"level":"fail","title":"roster doctor produced no output","detail":""}]}`))
+		return
+	}
+	_, _ = w.Write(out)
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
@@ -663,6 +683,7 @@ func router() http.Handler {
 	})
 
 	mux.HandleFunc("/api/fleet", handleFleet)
+	mux.HandleFunc("/api/doctor", handleDoctor)
 	mux.HandleFunc("/api/agents/", func(w http.ResponseWriter, r *http.Request) {
 		// /api/agents/<id>/messages  or  /api/agents/<id>/notify
 		rest := strings.TrimPrefix(r.URL.Path, "/api/agents/")
