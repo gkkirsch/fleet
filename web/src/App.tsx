@@ -274,20 +274,20 @@ export function App() {
 // ─── avatar ──────────────────────────────────────────────────────
 
 // Director brand mark — two stacked rounded squares, colon-shaped.
-// Drawn on a 16-tall viewBox so it lines up to typographic baselines.
-// Width 6 keeps it slim; the squares are square (6×6) with a 4-unit
-// gap between them.
+// 10×22 viewBox: two 10×10 squares (y=0..10, y=12..22) with a 2-unit
+// gap. Squares fill the viewBox exactly (no overflow), so the rendered
+// size matches the className height — what you set is what you get.
 function DirectorMark({ className }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 6 16"
+      viewBox="0 0 10 22"
       xmlns="http://www.w3.org/2000/svg"
       fill="currentColor"
       aria-hidden="true"
       className={className}
     >
-      <rect x="0" y="0" width="6" height="6" rx="1.4" />
-      <rect x="0" y="10" width="6" height="6" rx="1.4" />
+      <rect x="0" y="0" width="10" height="10" rx="2.4" />
+      <rect x="0" y="12" width="10" height="10" rx="2.4" />
     </svg>
   );
 }
@@ -406,7 +406,7 @@ function Sidebar({
     return (
       <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center overflow-hidden select-none">
         <div className="pt-10 pb-5">
-          <DirectorMark className="h-7 w-auto text-foreground" />
+          <DirectorMark className="h-11 w-auto text-foreground" />
         </div>
         <div className="flex-1 min-h-0 flex flex-col items-center gap-1 px-1 pt-1 pb-6 overflow-y-auto">
           {ordered.map((a) => (
@@ -444,7 +444,7 @@ function Sidebar({
     <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px] select-none">
       <div className="px-8 pt-10 pb-6">
         <div className="flex items-end gap-3">
-          <DirectorMark className="h-[34px] w-auto shrink-0 mb-[2px] text-foreground" />
+          <DirectorMark className="h-[58px] w-auto shrink-0 mb-[2px] text-foreground" />
           <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
             director
           </h1>
