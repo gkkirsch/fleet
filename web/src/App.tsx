@@ -406,7 +406,7 @@ function Sidebar({
     return (
       <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center overflow-hidden select-none">
         <div className="pt-10 pb-5">
-          <DirectorMark className="h-11 w-auto text-foreground" />
+          <DirectorMark className="h-7 w-auto text-foreground" />
         </div>
         <div className="flex-1 min-h-0 flex flex-col items-center gap-1 px-1 pt-1 pb-6 overflow-y-auto">
           {ordered.map((a) => (
@@ -444,7 +444,7 @@ function Sidebar({
     <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px] select-none">
       <div className="px-8 pt-10 pb-6">
         <div className="flex items-end gap-3">
-          <DirectorMark className="h-[58px] w-auto shrink-0 mb-[2px] text-foreground" />
+          <DirectorMark className="h-[32px] w-auto shrink-0 mb-[3px] text-foreground" />
           <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
             director
           </h1>
