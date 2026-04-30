@@ -273,6 +273,25 @@ export function App() {
 
 // ─── avatar ──────────────────────────────────────────────────────
 
+// Director brand mark — two stacked rounded squares, colon-shaped.
+// Drawn on a 16-tall viewBox so it lines up to typographic baselines.
+// Width 6 keeps it slim; the squares are square (6×6) with a 4-unit
+// gap between them.
+function DirectorMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 6 16"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      <rect x="0" y="0" width="6" height="6" rx="1.4" />
+      <rect x="0" y="10" width="6" height="6" rx="1.4" />
+    </svg>
+  );
+}
+
 // Flat-icon variant of KindTile used in the sidebar tree. No bg square,
 // just the lucide glyph in a muted japandi tone — keeps the row visually
 // quieter so the agent's name/description carries the row.
@@ -381,15 +400,13 @@ function Sidebar({
   const ToggleIcon = collapsed ? PanelLeft : PanelLeftClose;
 
   if (collapsed) {
-    // Rail mode: tiny serif "f" anchor up top (so the brand doesn't
+    // Rail mode: brand mark anchor up top (so the brand doesn't
     // disappear with the nav) + clickable kind tiles stacked below.
     const ordered = flattenTree(tree);
     return (
       <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 items-center overflow-hidden select-none">
         <div className="pt-10 pb-5">
-          <span className="font-[family-name:var(--font-heading)] text-[28px] leading-none tracking-tight text-foreground lowercase">
-            f
-          </span>
+          <DirectorMark className="h-7 w-auto text-foreground" />
         </div>
         <div className="flex-1 min-h-0 flex flex-col items-center gap-1 px-1 pt-1 pb-6 overflow-y-auto">
           {ordered.map((a) => (
@@ -426,9 +443,12 @@ function Sidebar({
   return (
     <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px] select-none">
       <div className="px-8 pt-10 pb-6">
-        <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
-          director
-        </h1>
+        <div className="flex items-end gap-3">
+          <DirectorMark className="h-[34px] w-auto shrink-0 mb-[2px] text-foreground" />
+          <h1 className="font-[family-name:var(--font-heading)] text-[42px] leading-[0.95] tracking-tight text-foreground">
+            director
+          </h1>
+        </div>
       </div>
       <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pt-1 pb-8 space-y-2">
         {agents === null && (
