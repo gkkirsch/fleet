@@ -443,9 +443,9 @@ function Sidebar({
   return (
     <aside className="border-r border-border/60 bg-sidebar flex flex-col h-full min-h-0 w-[280px] select-none">
       <div className="px-8 pt-10 pb-6">
-        <div className="flex items-end gap-3">
-          <DirectorMark className="h-[32px] w-auto shrink-0 mb-[3px] text-foreground" />
-          <h1 className="font-[family-name:var(--font-heading)] text-[36px] leading-[0.95] tracking-tight text-foreground">
+        <div className="flex items-center gap-3">
+          <DirectorMark className="h-[32px] w-auto shrink-0 text-foreground" />
+          <h1 className="font-[family-name:var(--font-heading)] text-[36px] leading-none tracking-tight text-foreground">
             director
           </h1>
         </div>
