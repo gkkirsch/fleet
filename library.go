@@ -57,11 +57,15 @@ var imageExts = map[string]string{
 	".avif": "image/avif",
 }
 
-// orchSpaceDir resolves the space directory for an orch (or its
-// orch ancestor for a worker). Returns "" if the agent isn't in the
-// fleet or the resolved cwd is empty. Never falls back to a default
-// — the caller surfaces a 404 to the UI rather than serving the data
-// root by accident.
+// orchSpaceDir resolves the library root for an orch (or its
+// orch ancestor for a worker) — i.e. <cwd>/library/, the directory
+// the Library panel surfaces to the user. The orch's cwd contains
+// other things (memory/, .claude/, etc) that aren't user-facing
+// artifacts and shouldn't appear in the panel.
+//
+// Missing directory is fine — the listing handler returns [] when
+// it can't stat the dir. The orch's plugin setup creates the
+// subtree on first run.
 func orchSpaceDir(agentID string) (string, error) {
 	all, err := loadAllAgents()
 	if err != nil {
@@ -77,9 +81,10 @@ func orchSpaceDir(agentID string) (string, error) {
 	if a == nil {
 		return "", fmt.Errorf("no such agent")
 	}
+	var cwd string
 	switch a.Kind {
 	case "orchestrator":
-		return a.Cwd, nil
+		cwd = a.Cwd
 	case "worker":
 		anc := findOrchAncestor(a.Parent, all)
 		if anc == "" {
@@ -87,12 +92,17 @@ func orchSpaceDir(agentID string) (string, error) {
 		}
 		for i := range all {
 			if all[i].ID == anc {
-				return all[i].Cwd, nil
+				cwd = all[i].Cwd
+				break
 			}
 		}
-		return "", fmt.Errorf("orch ancestor not in fleet")
+		if cwd == "" {
+			return "", fmt.Errorf("orch ancestor not in fleet")
+		}
+	default:
+		return "", fmt.Errorf("agent kind %q has no library", a.Kind)
 	}
-	return "", fmt.Errorf("agent kind %q has no library", a.Kind)
+	return filepath.Join(cwd, "library"), nil
 }
 
 // safeJoin joins root and rel, then verifies the result is still

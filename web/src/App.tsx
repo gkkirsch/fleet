@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAutoAnimate } from "@formkit/auto-animate/react";
 import { Activity, AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, FileCode, FileJson, FileSpreadsheet, FileText, Folder, Globe, Image as ImageIcon, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -535,23 +536,13 @@ function Sidebar({
           </h1>
         </div>
       </button>
-      <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pt-1 pb-8 space-y-2">
-        {agents === null && (
-          <p className="text-muted-foreground text-sm px-4 py-6 italic">loading…</p>
-        )}
-        {agents !== null && agents.length === 0 && (
-          <p className="text-muted-foreground text-sm px-4 py-6">no agents yet</p>
-        )}
-        {visibleRoots.map((a) => (
-          <AgentNode
-            key={a.id}
-            agent={a}
-            tree={tree}
-            selectedId={selectedId}
-            onSelect={onSelect}
-          />
-        ))}
-      </div>
+      <NavList
+        agents={agents}
+        roots={visibleRoots}
+        tree={tree}
+        selectedId={selectedId}
+        onSelect={onSelect}
+      />
       <div className="flex items-center justify-end px-4 pb-4">
         <button
           type="button"
@@ -563,6 +554,49 @@ function Sidebar({
         </button>
       </div>
     </aside>
+  );
+}
+
+// NavList renders the agent tree with auto-animated transitions when
+// orchs spawn, finish, or get forgotten. The animation makes the
+// tree feel alive — users can see something happen rather than the
+// list flickering between states. Lifted into its own component so
+// the useAutoAnimate hook can attach a ref to the container element.
+function NavList({
+  agents,
+  roots,
+  tree,
+  selectedId,
+  onSelect,
+}: {
+  agents: Agent[] | null;
+  roots: Agent[];
+  tree: Tree;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const [parent] = useAutoAnimate<HTMLDivElement>();
+  return (
+    <div
+      ref={parent}
+      className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pt-1 pb-8 space-y-2"
+    >
+      {agents === null && (
+        <p className="text-muted-foreground text-sm px-4 py-6 italic">loading…</p>
+      )}
+      {agents !== null && agents.length === 0 && (
+        <p className="text-muted-foreground text-sm px-4 py-6">no agents yet</p>
+      )}
+      {roots.map((a) => (
+        <AgentNode
+          key={a.id}
+          agent={a}
+          tree={tree}
+          selectedId={selectedId}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -3994,7 +4028,10 @@ function LibraryPanel({
     };
   }, [agent?.id, selected, path]);
 
-  if (!open || !agent || agent.kind !== "orchestrator") return null;
+  // Library is orch-only. We still render the empty aside for non-orchs
+  // so the parent flex layout doesn't reflow when toggling between
+  // agents — width is just 0.
+  const visible = open && !!agent && agent.kind === "orchestrator";
 
   const segments = path === "" ? [] : path.split("/");
   const fullSelectedPath = selected
@@ -4003,28 +4040,25 @@ function LibraryPanel({
       : selected.name
     : "";
   const imageSrc =
-    selected && selected.ext && IMAGE_EXTS.has(selected.ext)
-      ? `/api/agents/${agent.id}/library/file?path=${encodeURIComponent(fullSelectedPath)}`
+    visible && selected && selected.ext && IMAGE_EXTS.has(selected.ext)
+      ? `/api/agents/${agent!.id}/library/file?path=${encodeURIComponent(fullSelectedPath)}`
       : null;
 
   return (
-    <div className="fixed inset-y-0 right-0 z-30 flex w-[640px] max-w-[80vw] border-l border-border bg-background shadow-xl">
-      <div className="flex flex-col w-[280px] min-w-[240px] border-r border-border">
-        <div className="flex items-center justify-between px-5 pt-8 pb-3 border-b border-border/60">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.8} />
-            <span className="text-[11px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
-              Library
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            title="Close library"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <XIcon className="w-4 h-4" strokeWidth={1.8} />
-          </button>
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-sidebar h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        visible ? "w-[560px] max-w-[60vw]" : "w-0 border-l-0"
+      )}
+    >
+      {visible && agent && (
+      <div className="h-full flex">
+      <div className="flex flex-col w-[280px] min-w-[240px] border-r border-border/60 bg-sidebar">
+        <div className="flex items-center gap-2 px-5 pt-8 pb-3 border-b border-border/50">
+          <BookOpen className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.8} />
+          <span className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
+            Library
+          </span>
         </div>
         {/* Breadcrumb */}
         <div className="flex flex-wrap items-center gap-1 px-5 py-2 text-[12px] text-muted-foreground border-b border-border/40 min-h-[34px]">
@@ -4175,7 +4209,9 @@ function LibraryPanel({
           </div>
         )}
       </div>
-    </div>
+      </div>
+      )}
+    </aside>
   );
 }
 
