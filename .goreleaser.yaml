@@ -1,13 +1,19 @@
 version: 2
 
+# Archive name uses ProjectName so the URL matches the repo
+# (gkkirsch/director → director_darwin_arm64.tar.gz). The binary
+# inside is `director-server` — distinct from the binary so it's
+# clear what the file is when bundled into Director.app.
+project_name: director
+
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: fleetview
+  - id: director-server
     main: .
-    binary: fleetview
+    binary: director-server
     env:
       - CGO_ENABLED=0
     goos: [darwin]
@@ -17,7 +23,7 @@ builds:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
 
 archives:
-  - id: fleetview
+  - id: director-server
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     files:

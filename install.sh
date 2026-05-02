@@ -2,10 +2,10 @@
 # fleet — one-line installer
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/gkkirsch/fleet/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/gkkirsch/director/main/install.sh | bash
 #
 # Downloads the latest release of each of the four binaries
-# (amux, camux, roster, fleetview) for darwin arm64/amd64 from GitHub
+# (amux, camux, roster, director-server) for darwin arm64/amd64 from GitHub
 # Releases and drops them into ~/.local/bin. Bails loudly if a prereq
 # is missing — better to fail fast than half-install.
 #
@@ -82,7 +82,7 @@ download_binary() {
 download_binary amux   amux
 download_binary camux  camux
 download_binary roster roster
-download_binary fleet  fleetview
+download_binary director director-server
 
 # ── agent-browser (npm global) ────────────────────────────────────────
 if ! command -v agent-browser >/dev/null 2>&1; then
@@ -93,20 +93,20 @@ c_ok "agent-browser installed"
 
 # ── done ──────────────────────────────────────────────────────────────
 echo
-c_ok "Installed to ${INSTALL_DIR}: amux camux roster fleetview"
+c_ok "Installed to ${INSTALL_DIR}: amux camux roster director-server"
 echo
 cat <<EOF
 Next steps:
 
   1. Start the dashboard:
-     fleetview &
+     director-server &
 
   2. Open http://localhost:8080
 
   3. Spawn your first dispatcher:
-     roster spawn dispatch --kind dispatcher --description "routes user requests"
+     roster spawn director --kind dispatcher --description "routes user requests"
 
-  4. From the dashboard, message dispatch — it will spawn whatever
+  4. From the dashboard, message director — it will spawn whatever
      orchestrator the work needs.
 
 EOF

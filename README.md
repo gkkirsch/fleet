@@ -12,7 +12,7 @@ artifacts you can watch render in an iframe as they're built.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gkkirsch/fleet/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/gkkirsch/director/main/install.sh | bash
 ```
 
 macOS arm64 / amd64. Drops `amux`, `camux`, `roster`, and `fleetview`
@@ -25,10 +25,10 @@ Then:
 
 ```bash
 fleetview &                   # dashboard at http://localhost:8080
-roster spawn dispatch --kind dispatcher --description "routes user requests"
+roster spawn director --kind dispatcher --description "routes user requests"
 ```
 
-Open the dashboard, message dispatch — it'll spawn whatever orchestrator
+Open the dashboard, message director — it'll spawn whatever orchestrator
 the work needs.
 
 ## What you get
