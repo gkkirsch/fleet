@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, Globe, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { Activity, AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, FileCode, FileJson, FileSpreadsheet, FileText, Folder, Globe, Image as ImageIcon, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -83,6 +83,25 @@ function useSchedulesPanel() {
   };
 }
 
+const LIBRARY_PANEL_STORAGE_KEY = "fleetview.libraryPanel.open";
+
+function useLibraryPanel() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(LIBRARY_PANEL_STORAGE_KEY);
+    return v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(LIBRARY_PANEL_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
+    close: useCallback(() => set(false), [set]),
+  };
+}
+
 export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   // User's explicit pick. When null, we fall back to the dispatcher so
@@ -95,29 +114,43 @@ export function App() {
   const panel = useThreadPanel();
   const artifactPanel = useArtifactPanel();
   const schedulesPanel = useSchedulesPanel();
+  const libraryPanel = useLibraryPanel();
   const sidebar = useFleetSidebar();
   // Mutually-exclusive panels — opening one auto-closes the others.
+  // Right-rail panels are mutually exclusive — opening one closes the
+  // others. Keeps the single 400-720px slot from being fought over.
   const toggleSettings = useCallback(() => {
     if (!panel.open) {
       artifactPanel.close();
       schedulesPanel.close();
+      libraryPanel.close();
     }
     panel.toggle();
-  }, [panel, artifactPanel, schedulesPanel]);
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel]);
   const toggleArtifact = useCallback(() => {
     if (!artifactPanel.open) {
       panel.close();
       schedulesPanel.close();
+      libraryPanel.close();
     }
     artifactPanel.toggle();
-  }, [panel, artifactPanel, schedulesPanel]);
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel]);
   const toggleSchedules = useCallback(() => {
     if (!schedulesPanel.open) {
       panel.close();
       artifactPanel.close();
+      libraryPanel.close();
     }
     schedulesPanel.toggle();
-  }, [panel, artifactPanel, schedulesPanel]);
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel]);
+  const toggleLibrary = useCallback(() => {
+    if (!libraryPanel.open) {
+      panel.close();
+      artifactPanel.close();
+      schedulesPanel.close();
+    }
+    libraryPanel.toggle();
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel]);
   // Map of agent id → timestamp of a just-sent message. Used to show the
   // thinking shimmer immediately, before backend polling catches up to the
   // agent entering "streaming" state. Cleared by the effect below.
@@ -238,6 +271,7 @@ export function App() {
               panel.close();
               artifactPanel.close();
               schedulesPanel.close();
+              libraryPanel.close();
             }
           }}
           collapsed={!sidebar.open}
@@ -257,6 +291,8 @@ export function App() {
           onToggleArtifactPanel={toggleArtifact}
           schedulesPanelOpen={schedulesPanel.open}
           onToggleSchedulesPanel={toggleSchedules}
+          libraryPanelOpen={libraryPanel.open}
+          onToggleLibraryPanel={toggleLibrary}
           sidebarOpen={sidebar.open}
           onToggleSidebar={sidebar.toggle}
         />
@@ -274,6 +310,11 @@ export function App() {
         agent={selected}
         open={schedulesPanel.open}
         onClose={schedulesPanel.close}
+      />
+      <LibraryPanel
+        agent={selected}
+        open={libraryPanel.open}
+        onClose={libraryPanel.close}
       />
     </div>
   );
@@ -665,6 +706,8 @@ function Detail({
   onToggleArtifactPanel,
   schedulesPanelOpen,
   onToggleSchedulesPanel,
+  libraryPanelOpen,
+  onToggleLibraryPanel,
   sidebarOpen,
   onToggleSidebar,
 }: {
@@ -679,6 +722,8 @@ function Detail({
   onToggleArtifactPanel: () => void;
   schedulesPanelOpen: boolean;
   onToggleSchedulesPanel: () => void;
+  libraryPanelOpen: boolean;
+  onToggleLibraryPanel: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }) {
@@ -693,6 +738,8 @@ function Detail({
           onToggleArtifactPanel={onToggleArtifactPanel}
           schedulesPanelOpen={schedulesPanelOpen}
           onToggleSchedulesPanel={onToggleSchedulesPanel}
+          libraryPanelOpen={libraryPanelOpen}
+          onToggleLibraryPanel={onToggleLibraryPanel}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={onToggleSidebar}
         />
@@ -712,6 +759,8 @@ function Detail({
         onToggleArtifactPanel={onToggleArtifactPanel}
         schedulesPanelOpen={schedulesPanelOpen}
         onToggleSchedulesPanel={onToggleSchedulesPanel}
+        libraryPanelOpen={libraryPanelOpen}
+        onToggleLibraryPanel={onToggleLibraryPanel}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={onToggleSidebar}
       />
@@ -752,6 +801,8 @@ function TopNav({
   onToggleArtifactPanel,
   schedulesPanelOpen,
   onToggleSchedulesPanel,
+  libraryPanelOpen,
+  onToggleLibraryPanel,
   sidebarOpen,
   onToggleSidebar,
 }: {
@@ -762,6 +813,8 @@ function TopNav({
   onToggleArtifactPanel: () => void;
   schedulesPanelOpen: boolean;
   onToggleSchedulesPanel: () => void;
+  libraryPanelOpen: boolean;
+  onToggleLibraryPanel: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }) {
@@ -777,6 +830,9 @@ function TopNav({
         {agent && agent.kind !== "worker" && <BrowserButton agent={agent} />}
         {agent && agent.kind !== "worker" && (
           <ArtifactNavButton agent={agent} open={artifactPanelOpen} onToggle={onToggleArtifactPanel} />
+        )}
+        {agent?.kind === "orchestrator" && (
+          <LibraryNavButton agent={agent} open={libraryPanelOpen} onToggle={onToggleLibraryPanel} />
         )}
         {agent && agent.kind !== "worker" && (
           <SchedulesNavButton agent={agent} open={schedulesPanelOpen} onToggle={onToggleSchedulesPanel} />
@@ -1115,7 +1171,7 @@ function MessageStream({
         <div className="mb-3">
           <KindGlyph kind={agent.kind} size={54} />
         </div>
-        <h2 className="font-[family-name:var(--font-heading)] text-[56px] leading-[1.02] tracking-tight text-foreground mb-1">
+        <h2 className="font-[family-name:var(--font-heading)] text-[56px] leading-[1.02] tracking-tight text-foreground mb-4">
           {titleFor(agent)}
         </h2>
         {agent.description && titleFor(agent) !== agent.description && (
@@ -1267,7 +1323,12 @@ function MessageRow({ m, agentKind }: { m: Message; agentKind?: string }) {
     // is noise there. In every OTHER pane (orchestrator, worker) the
     // inbound relay IS the task, so render it with a small "from X"
     // caption to keep it visually distinct from raw user input.
-    if (sender) {
+    //
+    // Exception: `from id="ui"` IS the user — that's how the chat
+    // composer tags its own sends so the orch knows the message
+    // came from the human, not a peer agent. Render those as plain
+    // user messages everywhere, including the dispatcher pane.
+    if (sender && sender !== "ui") {
       if (agentKind === "dispatcher") return null;
       const body = relayBody(m.text);
       if (!body.trim()) return null;
@@ -1282,7 +1343,10 @@ function MessageRow({ m, agentKind }: { m: Message; agentKind?: string }) {
         </div>
       );
     }
-    const cleaned = cleanUserText(m.text || "");
+    // For `<from id="ui">…</from>`-wrapped sends, unwrap to the inner
+    // body so the user sees their actual text — not the wrapper tags.
+    const raw = sender === "ui" ? relayBody(m.text) : (m.text || "");
+    const cleaned = cleanUserText(raw);
     const { stripped, paths } = extractAttachments(cleaned);
     const hasText = stripped.trim().length > 0;
     return (
@@ -3728,6 +3792,390 @@ function ArtifactNavButton({
       <span className="hidden @lg:inline">Artifact</span>
       <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
     </button>
+  );
+}
+
+// ─── library ─────────────────────────────────────────────────────
+//
+// Per-orchestrator file viewer over the orch's space directory. Each
+// orch owns <data>/<id>/ where it writes notes, csvs, audits, etc.
+// The library button shows up in the top bar (orchestrator only) and
+// opens a sheet that lists folders/files with a preview pane.
+//
+// The button stays visible even when the directory is empty — unlike
+// ArtifactNavButton which is gated on having artifacts. An empty
+// library is still meaningful UI ("this orch hasn't written anything
+// yet"), and hiding the button would leave users wondering where it
+// went between sessions.
+
+type LibraryEntry = {
+  name: string;
+  type: "dir" | "file";
+  size?: number;
+  mtime: string;
+  ext?: string;
+};
+
+type LibraryFile =
+  | { kind: "text"; content: string; size: number; truncated: boolean }
+  | { kind: "binary"; size: number };
+
+function LibraryNavButton({
+  agent,
+  open,
+  onToggle,
+}: {
+  agent: Agent;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (agent.kind !== "orchestrator") return null;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={open ? "Hide library" : "Show library"}
+      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+    >
+      <span className="hidden @lg:inline">Library</span>
+      <BookOpen className="w-3.5 h-3.5" strokeWidth={1.8} />
+    </button>
+  );
+}
+
+// Map file extensions to lucide icons. Anything unmapped falls back
+// to FileText. Keeping this set tight on purpose — we'd rather a few
+// "generic file" icons than a wall of ad-hoc images.
+function libraryIconFor(entry: LibraryEntry): typeof FileText {
+  if (entry.type === "dir") return Folder;
+  switch (entry.ext) {
+    case ".png":
+    case ".jpg":
+    case ".jpeg":
+    case ".gif":
+    case ".webp":
+    case ".svg":
+    case ".bmp":
+    case ".ico":
+    case ".avif":
+      return ImageIcon;
+    case ".json":
+    case ".yaml":
+    case ".yml":
+    case ".toml":
+      return FileJson;
+    case ".js":
+    case ".jsx":
+    case ".ts":
+    case ".tsx":
+    case ".py":
+    case ".go":
+    case ".rs":
+    case ".sh":
+    case ".html":
+    case ".css":
+      return FileCode;
+    case ".csv":
+    case ".tsv":
+      return FileSpreadsheet;
+    case ".pdf":
+      return FileText;
+    default:
+      return FileText;
+  }
+}
+
+function formatSize(bytes?: number): string {
+  if (bytes == null) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const IMAGE_EXTS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".bmp",
+  ".ico",
+  ".avif",
+]);
+
+function LibraryPanel({
+  agent,
+  open,
+  onClose,
+}: {
+  agent: Agent | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  // Path is "" at the orch's space root. Subdirs are joined with "/"
+  // so navigation reads naturally as a breadcrumb.
+  const [path, setPath] = useState<string>("");
+  const [entries, setEntries] = useState<LibraryEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<LibraryEntry | null>(null);
+  const [filePayload, setFilePayload] = useState<LibraryFile | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
+
+  // Reset path + selection when the orch changes — never carry "you
+  // were inside foo/bar/" state between two unrelated orchs.
+  useEffect(() => {
+    setPath("");
+    setSelected(null);
+    setFilePayload(null);
+  }, [agent?.id]);
+
+  // List the current directory whenever path / agent / open changes.
+  useEffect(() => {
+    if (!open || !agent || agent.kind !== "orchestrator") return;
+    let cancelled = false;
+    setError(null);
+    fetch(
+      `/api/agents/${agent.id}/library?path=${encodeURIComponent(path)}`
+    )
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      })
+      .then((d: LibraryEntry[]) => {
+        if (!cancelled) setEntries(d);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setEntries([]);
+          setError(String(e?.message || e));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, agent?.id, path]);
+
+  // Load the selected file's content. Images get rendered via a
+  // direct GET against the file endpoint (the browser handles the
+  // streaming binary); text/binary go through the JSON shape so we
+  // can show the truncation flag and size cleanly.
+  useEffect(() => {
+    if (!agent || !selected || selected.type !== "file") {
+      setFilePayload(null);
+      return;
+    }
+    if (selected.ext && IMAGE_EXTS.has(selected.ext)) {
+      // Images render via <img src> — no JSON fetch needed.
+      setFilePayload({ kind: "binary", size: selected.size ?? 0 });
+      return;
+    }
+    let cancelled = false;
+    setFileLoading(true);
+    const full = path ? `${path}/${selected.name}` : selected.name;
+    fetch(
+      `/api/agents/${agent.id}/library/file?path=${encodeURIComponent(full)}`
+    )
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      })
+      .then((d: LibraryFile) => {
+        if (!cancelled) setFilePayload(d);
+      })
+      .catch(() => {
+        if (!cancelled) setFilePayload(null);
+      })
+      .finally(() => {
+        if (!cancelled) setFileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent?.id, selected, path]);
+
+  if (!open || !agent || agent.kind !== "orchestrator") return null;
+
+  const segments = path === "" ? [] : path.split("/");
+  const fullSelectedPath = selected
+    ? path
+      ? `${path}/${selected.name}`
+      : selected.name
+    : "";
+  const imageSrc =
+    selected && selected.ext && IMAGE_EXTS.has(selected.ext)
+      ? `/api/agents/${agent.id}/library/file?path=${encodeURIComponent(fullSelectedPath)}`
+      : null;
+
+  return (
+    <div className="fixed inset-y-0 right-0 z-30 flex w-[640px] max-w-[80vw] border-l border-border bg-background shadow-xl">
+      <div className="flex flex-col w-[280px] min-w-[240px] border-r border-border">
+        <div className="flex items-center justify-between px-5 pt-8 pb-3 border-b border-border/60">
+          <div className="flex items-center gap-2">
+            <BookOpen className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.8} />
+            <span className="text-[11px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
+              Library
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close library"
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <XIcon className="w-4 h-4" strokeWidth={1.8} />
+          </button>
+        </div>
+        {/* Breadcrumb */}
+        <div className="flex flex-wrap items-center gap-1 px-5 py-2 text-[12px] text-muted-foreground border-b border-border/40 min-h-[34px]">
+          <button
+            type="button"
+            onClick={() => {
+              setPath("");
+              setSelected(null);
+            }}
+            className="hover:text-foreground"
+            title={agent.id}
+          >
+            {agent.id}
+          </button>
+          {segments.map((seg, i) => {
+            const next = segments.slice(0, i + 1).join("/");
+            return (
+              <span key={i} className="flex items-center gap-1">
+                <ChevronRight className="w-3 h-3 opacity-50" strokeWidth={1.8} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPath(next);
+                    setSelected(null);
+                  }}
+                  className="hover:text-foreground"
+                >
+                  {seg}
+                </button>
+              </span>
+            );
+          })}
+        </div>
+        {/* Listing */}
+        <div className="flex-1 overflow-y-auto">
+          {error ? (
+            <div className="px-5 py-4 text-[12px] text-[color:var(--clay)]">
+              {error}
+            </div>
+          ) : entries == null ? (
+            <div className="px-5 py-4 text-[12px] text-muted-foreground italic">
+              loading…
+            </div>
+          ) : entries.length === 0 ? (
+            <div className="px-5 py-4 text-[12px] text-muted-foreground italic">
+              empty
+            </div>
+          ) : (
+            <ul className="py-1">
+              {entries.map((e) => {
+                const Icon = libraryIconFor(e);
+                const isSel =
+                  selected?.name === e.name && selected?.type === e.type;
+                return (
+                  <li key={e.name}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (e.type === "dir") {
+                          setPath(path ? `${path}/${e.name}` : e.name);
+                          setSelected(null);
+                        } else {
+                          setSelected(e);
+                        }
+                      }}
+                      className={cn(
+                        "flex items-center gap-2 w-full px-5 py-1.5 text-left text-[13px]",
+                        isSel
+                          ? "bg-secondary text-foreground"
+                          : "text-foreground/90 hover:bg-secondary/50"
+                      )}
+                    >
+                      <Icon
+                        className={cn(
+                          "w-3.5 h-3.5 shrink-0",
+                          e.type === "dir"
+                            ? "text-[color:var(--primary)]"
+                            : "text-muted-foreground"
+                        )}
+                        strokeWidth={1.8}
+                      />
+                      <span className="truncate flex-1">{e.name}</span>
+                      {e.type === "file" && (
+                        <span className="text-[10px] text-muted-foreground tabular-nums">
+                          {formatSize(e.size)}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+      {/* Preview */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {selected ? (
+          <>
+            <div className="px-6 pt-8 pb-3 border-b border-border/60 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="text-[14px] font-medium truncate">
+                  {selected.name}
+                </div>
+                <div className="text-[11px] text-muted-foreground tabular-nums">
+                  {formatSize(selected.size)} · {selected.ext || "file"}
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto">
+              {imageSrc ? (
+                <div className="p-6 flex items-center justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imageSrc}
+                    alt={selected.name}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                </div>
+              ) : fileLoading ? (
+                <div className="px-6 py-4 text-[12px] text-muted-foreground italic">
+                  loading…
+                </div>
+              ) : filePayload?.kind === "text" ? (
+                <pre className="px-6 py-4 text-[12px] leading-relaxed font-mono whitespace-pre-wrap break-words">
+                  {filePayload.content}
+                  {filePayload.truncated && (
+                    <span className="block mt-4 text-[11px] text-muted-foreground italic">
+                      … truncated at 5 MB ({formatSize(filePayload.size)} total)
+                    </span>
+                  )}
+                </pre>
+              ) : filePayload?.kind === "binary" ? (
+                <div className="px-6 py-4 text-[12px] text-muted-foreground italic">
+                  binary file ({formatSize(filePayload.size)}) — preview not
+                  available
+                </div>
+              ) : (
+                <div className="px-6 py-4 text-[12px] text-muted-foreground italic">
+                  could not load
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-[12px] text-muted-foreground italic">
+            select a file
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -728,6 +728,10 @@ func router() http.Handler {
 			handleCredentials(w, r, id)
 		case "browser":
 			handleBrowser(w, r, id)
+		case "library":
+			handleLibrary(w, r, id)
+		case "library/file":
+			handleLibraryFile(w, r, id)
 		case "interrupt":
 			if r.Method != http.MethodPost {
 				http.Error(w, "method", http.StatusMethodNotAllowed)
