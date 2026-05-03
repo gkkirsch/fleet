@@ -101,7 +101,7 @@ Next steps:
   1. Start the dashboard:
      director-server &
 
-  2. Open http://localhost:8080
+  2. Open http://localhost:47821
 
   3. Spawn your first dispatcher:
      roster spawn director --kind dispatcher --description "routes user requests"

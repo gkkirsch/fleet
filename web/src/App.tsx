@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAutoAnimate } from "@formkit/auto-animate/react";
-import { Activity, AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, FileCode, FileJson, FileSpreadsheet, FileText, Folder, Globe, Image as ImageIcon, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkles, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { Activity, AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, FileCode, FileJson, FileSpreadsheet, FileText, Folder, Globe, Image as ImageIcon, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkle, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -112,6 +112,11 @@ export function App() {
     pickedId ?? agents?.find((a) => a.kind === "dispatcher")?.id ?? null;
   const setSelectedId = setPickedId;
   const [messages, setMessages] = useState<Message[]>([]);
+  // Cache of the last raw JSON body the messages poll returned. We
+  // skip setMessages when the next poll comes back byte-identical,
+  // which prevents the chat scroll area from re-rendering every 2s
+  // and the visible "bump" as markdown tables/code blocks reflow.
+  const lastMessagesJSONRef = useRef<string>("");
   const panel = useThreadPanel();
   const artifactPanel = useArtifactPanel();
   const schedulesPanel = useSchedulesPanel();
@@ -207,13 +212,28 @@ export function App() {
   useEffect(() => {
     if (!selectedId) {
       setMessages([]);
+      lastMessagesJSONRef.current = "";
       return;
     }
     let stop = false;
     const tick = async () => {
       const r = await fetch(`/api/agents/${selectedId}/messages`).catch(() => null);
       if (stop || !r || !r.ok) return;
-      setMessages(((await r.json()) as Message[] | null) ?? []);
+      // Compare raw JSON before re-deserializing. Most polls return
+      // byte-identical content; setMessages with a new (but equal)
+      // array would still force every MessageRow to re-render and
+      // re-layout — which causes visible "bumping" as code blocks,
+      // tables, and markdown reflow with their internal scrollers
+      // recomputing. Skip when nothing has changed.
+      const text = await r.text().catch(() => "");
+      if (text === lastMessagesJSONRef.current) return;
+      lastMessagesJSONRef.current = text;
+      try {
+        const next = JSON.parse(text) as Message[] | null;
+        setMessages(next ?? []);
+      } catch {
+        /* malformed payload, ignore */
+      }
     };
     tick();
     const h = setInterval(tick, POLL_MS);
@@ -336,6 +356,7 @@ export function App() {
       <ThreadPanel
         agent={selected}
         open={skillsPanelOpen}
+        onClose={panel.close}
       />
       <ArtifactPanel
         agent={selected}
@@ -512,10 +533,22 @@ function Sidebar({
     // Rail mode: brand mark up top doubles as the dispatcher tile
     // (clicking it selects the dispatcher / "Director" view), then
     // orchestrator + worker tiles stacked below.
+    //
+    // Apply the same "active workers only" rule the expanded sidebar
+    // uses: orchestrators always show; workers only when streaming
+    // (or selected). Idle workers stay hidden — the rail isn't the
+    // place to scroll through old sessions.
+    const isActiveWorker = (w: Agent): boolean =>
+      w.status === "streaming" ||
+      w.status === "starting" ||
+      w.status === "trust-dialog" ||
+      w.status === "permission-dialog" ||
+      w.id === selectedId;
     const ordered = visibleRoots.flatMap((r) => {
       const out: Agent[] = [r];
       const walk = (a: Agent) => {
         for (const k of tree.children.get(a.id) ?? []) {
+          if (k.kind === "worker" && !isActiveWorker(k)) continue;
           out.push(k);
           walk(k);
         }
@@ -754,19 +787,122 @@ function AgentNode({
       </div>
       {kids.length > 0 && (
         <div className={cn(kidIndent, kidsTopGap, "relative")}>
-          {kids.map((k) => (
-            <AgentNode
-              key={k.id}
-              agent={k}
-              tree={tree}
-              selectedId={selectedId}
-              onSelect={onSelect}
-              depth={depth + 1}
-            />
-          ))}
+          <ChildrenList
+            kids={kids}
+            tree={tree}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            depth={depth}
+            parentKind={agent.kind}
+            parentInFocus={agent.id === selectedId || isWorker || hasDescendantSelected(agent.id, tree, selectedId)}
+          />
         </div>
       )}
     </div>
+  );
+}
+
+// hasDescendantSelected returns true when any descendant (worker or
+// further-nested) of agentID is the currently selected agent. Used so
+// the "Show N past sessions" toggle only appears under the orch the
+// user is currently focused on (the orch itself OR one of its workers).
+function hasDescendantSelected(agentID: string, tree: Tree, selectedId: string | null): boolean {
+  if (!selectedId) return false;
+  const stack = [agentID];
+  while (stack.length) {
+    const id = stack.pop()!;
+    const kids = tree.children.get(id) ?? [];
+    for (const k of kids) {
+      if (k.id === selectedId) return true;
+      stack.push(k.id);
+    }
+  }
+  return false;
+}
+
+// ChildrenList: under orchs, partition workers into active (streaming)
+// and idle (everything else). Active workers always render; idle ones
+// hide behind a "Show N past sessions" toggle so the sidebar doesn't
+// stack up dozens of stale workers.
+//
+// Orchestrators under the dispatcher always render directly — only
+// the worker layer gets the partition.
+function ChildrenList({
+  kids,
+  tree,
+  selectedId,
+  onSelect,
+  depth,
+  parentKind,
+  parentInFocus,
+}: {
+  kids: Agent[];
+  tree: Tree;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  depth: number;
+  parentKind: string;
+  parentInFocus: boolean;
+}) {
+  const [showHistory, setShowHistory] = useState(false);
+  const isOrch = parentKind === "orchestrator";
+
+  const { active, idle } = useMemo(() => {
+    if (!isOrch) return { active: kids, idle: [] as Agent[] };
+    const active: Agent[] = [];
+    const idle: Agent[] = [];
+    for (const k of kids) {
+      // A worker is "active" if it's actively producing or about to —
+      // streaming, starting up, or sitting in a UI-blocking dialog.
+      // Anything else (ready/idle, stopped, dead) is past work.
+      if (
+        k.status === "streaming" ||
+        k.status === "starting" ||
+        k.status === "trust-dialog" ||
+        k.status === "permission-dialog"
+      ) {
+        active.push(k);
+      } else {
+        idle.push(k);
+      }
+    }
+    // Always show the currently-selected worker so the user can see
+    // where they are even if it's no longer streaming.
+    for (let i = idle.length - 1; i >= 0; i--) {
+      if (idle[i].id === selectedId) {
+        active.push(idle[i]);
+        idle.splice(i, 1);
+      }
+    }
+    return { active, idle };
+  }, [kids, isOrch, selectedId]);
+
+  const renderNode = (k: Agent) => (
+    <AgentNode
+      key={k.id}
+      agent={k}
+      tree={tree}
+      selectedId={selectedId}
+      onSelect={onSelect}
+      depth={depth + 1}
+    />
+  );
+
+  return (
+    <>
+      {active.map(renderNode)}
+      {isOrch && idle.length > 0 && parentInFocus && (
+        <button
+          type="button"
+          onClick={() => setShowHistory((v) => !v)}
+          className="block w-full text-left px-2.5 py-1 rounded-md text-[11px] text-muted-foreground/80 hover:text-foreground hover:bg-sidebar-accent/40 transition-colors tabular-nums"
+        >
+          {showHistory ? "Hide" : "Show"} {idle.length} past
+          {idle.length === 1 ? " session" : " sessions"}
+        </button>
+      )}
+      {showHistory && parentInFocus && idle.map(renderNode)}
+    </>
   );
 }
 
@@ -914,7 +1050,6 @@ function TopNav({
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }) {
-  const SettingsIcon = panelOpen ? PanelRightClose : PanelRight;
   const SidebarIcon = sidebarOpen ? PanelLeftClose : PanelLeft;
   // Strip itself is transparent — only the button group pill below
   // carries the bg+blur. This stops the full-width blur from
@@ -949,10 +1084,13 @@ function TopNav({
             type="button"
             onClick={onTogglePanel}
             title={panelOpen ? "Hide skills panel" : "Show skills panel"}
-            className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+            className={cn(
+              "flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] uppercase hover:text-foreground transition-colors",
+              panelOpen ? "text-foreground" : "text-muted-foreground"
+            )}
           >
             <span className="hidden @lg:inline">Skills</span>
-            <SettingsIcon className="w-3.5 h-3.5" strokeWidth={1.8} />
+            <Sparkle className="w-3.5 h-3.5" strokeWidth={1.8} />
           </button>
         )}
       </div>
@@ -1572,13 +1710,35 @@ function Markdown({ children, tone }: { children: string; tone: "light" | "dark"
           <blockquote className={`my-2 pl-3 ${styles.quoteBorder} italic opacity-90`}>{withIcons(children)}</blockquote>
         ),
         hr: () => <hr className={`my-3 ${styles.hrColor}`} />,
+        // Tables: a single rounded container with a thin border.
+        // Internal cells stay separator-only (border-b on rows) so we
+        // get the bento-card look without busy gridlines, and zebra
+        // striping on body rows for readability. Header has the same
+        // soft tint we use elsewhere for muted UI surfaces.
         table: ({ children }) => (
-          <div className="my-2 overflow-x-auto">
-            <table className="text-[0.92em] border-collapse">{children}</table>
+          <div
+            className={`scrollbar-calm my-3 overflow-x-auto rounded-lg border ${styles.tableOuter}`}
+          >
+            <table className="text-[0.92em] w-full border-collapse">
+              {children}
+            </table>
           </div>
         ),
-        th: ({ children }) => <th className={`px-2 py-1 text-left font-semibold ${styles.tableBorder}`}>{withIcons(children)}</th>,
-        td: ({ children }) => <td className={`px-2 py-1 ${styles.tableBorder}`}>{withIcons(children)}</td>,
+        thead: ({ children }) => (
+          <thead className={styles.tableHead}>{children}</thead>
+        ),
+        tbody: ({ children }) => <tbody>{children}</tbody>,
+        tr: ({ children }) => (
+          <tr className={`${styles.tableRow} last:border-b-0`}>{children}</tr>
+        ),
+        th: ({ children }) => (
+          <th className="px-3 py-1.5 text-left font-medium text-[0.95em]">
+            {withIcons(children)}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className="px-3 py-1.5 align-top">{withIcons(children)}</td>
+        ),
       }}
     >
       {children}
@@ -1667,6 +1827,12 @@ const MARKDOWN_TONE = {
     quoteBorder: "border-l-2 border-foreground/25",
     hrColor: "border-foreground/15",
     tableBorder: "border border-foreground/15",
+    // Outer table container: the rounded card around everything.
+    tableOuter: "border-foreground/15",
+    // Header row: subtle tinted band.
+    tableHead: "bg-foreground/[0.04] text-foreground/80",
+    // Each row gets a hairline separator + light zebra striping.
+    tableRow: "border-b border-foreground/10 odd:bg-foreground/[0.025]",
   },
   // dark = the assistant-side bubble (foreground bg, light text)
   dark: {
@@ -1676,6 +1842,9 @@ const MARKDOWN_TONE = {
     quoteBorder: "border-l-2 border-background/30",
     hrColor: "border-background/20",
     tableBorder: "border border-background/20",
+    tableOuter: "border-background/20",
+    tableHead: "bg-background/[0.06] text-background/85",
+    tableRow: "border-b border-background/15 odd:bg-background/[0.04]",
   },
 } as const;
 
@@ -2112,9 +2281,11 @@ type PanelRoute =
 function ThreadPanel({
   agent,
   open,
+  onClose,
 }: {
   agent: Agent | null;
   open: boolean;
+  onClose: () => void;
 }) {
   const [data, setData] = useState<ClaudeDirView | null>(null);
   const [loading, setLoading] = useState(false);
@@ -2264,9 +2435,33 @@ function ThreadPanel({
     >
       {open && (
         <div className="h-full flex flex-col w-[340px] xl:w-[380px]">
-          {route.kind === "home" && (
-            <PanelHeader agent={agent} view={data} route={route} />
-          )}
+          <PanelHeader
+            agent={agent}
+            view={data}
+            route={route}
+            onBack={() => {
+              // Step back one level instead of jumping all the way to home:
+              //   home              ← (no back)
+              //   marketplaces      ← home
+              //   marketplace       ← marketplaces
+              //   marketplace-add   ← marketplaces
+              //   plugin (origin=home)        ← home
+              //   plugin (origin=marketplace) ← marketplace
+              if (route.kind === "marketplaces") setRoute({ kind: "home" });
+              else if (route.kind === "marketplace") setRoute({ kind: "marketplaces" });
+              else if (route.kind === "marketplace-add") setRoute({ kind: "marketplaces" });
+              else if (route.kind === "plugin") {
+                if (route.origin === "marketplace") {
+                  setRoute({ kind: "marketplace", marketplace: route.marketplace });
+                } else {
+                  setRoute({ kind: "home" });
+                }
+              } else {
+                setRoute({ kind: "home" });
+              }
+            }}
+            onClose={onClose}
+          />
           <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto">
             {!agent && (
               <p className="px-8 py-6 text-sm italic text-muted-foreground">
@@ -2392,40 +2587,64 @@ function ThreadPanel({
 }
 
 function PanelHeader({
-  agent,
-  view,
+  view: _view,
   route,
+  onBack,
+  onClose,
 }: {
   agent: Agent | null;
   view: ClaudeDirView | null;
   route: PanelRoute;
+  // Goes one level up from the current route (NOT all the way home).
+  // ThreadPanel computes the right next route from the parent and
+  // passes a setter that performs the step.
+  onBack: () => void;
+  onClose: () => void;
 }) {
-  const sourceLabel = !view
-    ? ""
-    : view.source === "own"
-      ? "own .claude"
-      : view.source === "inherited"
-        ? `inherited · ${view.source_id}`
-        : "global ~/.claude";
-  let crumb = "Installed";
-  if (route.kind === "marketplaces") crumb = "Marketplaces";
-  else if (route.kind === "marketplace") crumb = `Marketplaces · ${route.marketplace}`;
-  else if (route.kind === "marketplace-add") crumb = "Marketplaces · Add";
-  else if (route.kind === "plugin")
-    crumb = route.origin === "marketplace" ? `${route.marketplace} · Plugin` : "Plugin";
+  // Match SchedulesPanel/LibraryPanel/Tasks-plugin layout: short
+  // tracking-uppercase label on the left, close button on the right,
+  // px-6 pt-7 pb-3, no border. When the user has drilled into a
+  // sub-route (marketplaces, plugin, …) the icon flips to a back
+  // arrow with the sub-route label.
+  let label = "Skills";
+  let inSub = false;
+  if (route.kind === "marketplaces") { label = "Marketplaces"; inSub = true; }
+  else if (route.kind === "marketplace") { label = route.marketplace; inSub = true; }
+  else if (route.kind === "marketplace-add") { label = "Add marketplace"; inSub = true; }
+  else if (route.kind === "plugin") { label = route.pluginName; inSub = true; }
+  // Force-upper in JS — CSS `uppercase` should suffice but plays
+  // weird when the label contains hyphens / numbers / @, and we want
+  // the header to look identical regardless of route content.
+  label = label.toUpperCase();
+
   return (
-    <div className="px-8 pt-8 pb-5 border-b border-border/50">
-      <div className="text-[10px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
-        {crumb}
+    <div className="flex items-center justify-between px-6 pt-7 pb-3">
+      <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+        {inSub ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex items-center gap-2 hover:text-foreground transition-colors"
+            title="Back"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.8} />
+            <span className="truncate max-w-[200px]">{label}</span>
+          </button>
+        ) : (
+          <>
+            <Sparkle className="w-3.5 h-3.5" strokeWidth={1.8} />
+            <span>Skills</span>
+          </>
+        )}
       </div>
-      <div className="mt-1 font-[family-name:var(--font-heading)] text-[28px] leading-[1] tracking-tight text-foreground">
-        Skills
-      </div>
-      {sourceLabel && (
-        <div className="mt-2 text-[11px] text-muted-foreground font-mono truncate">
-          {sourceLabel}
-        </div>
-      )}
+      <button
+        type="button"
+        onClick={onClose}
+        className="text-muted-foreground hover:text-foreground transition-colors"
+        title="Close skills panel"
+      >
+        <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+      </button>
     </div>
   );
 }
@@ -2454,29 +2673,24 @@ function HomeView({
           nothing installed yet
         </p>
       )}
-      <Section icon={Store} label="Marketplaces" count={markets.length}>
-        <div className="space-y-2">
-          {markets.map((m) => (
-            <MarketplaceTile
-              key={m.name}
-              marketplace={m}
-              onClick={() => onBrowse(m.name)}
-            />
-          ))}
-          <button
-            type="button"
-            onClick={() => onBrowse()}
-            className="group w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl ring-1 ring-dashed ring-border/60 hover:ring-border hover:bg-card transition-colors text-left"
-          >
-            <div className="shrink-0 w-7 h-7 rounded-lg bg-secondary flex items-center justify-center">
-              <Plus className="text-muted-foreground" size={13} strokeWidth={1.8} />
-            </div>
-            <div className="text-[12.5px] text-muted-foreground group-hover:text-foreground transition-colors">
-              Manage marketplaces
-            </div>
-          </button>
+      {/* One CTA → marketplaces hub. Was a list of every connected
+          marketplace plus a "Manage" tile, but the user only really
+          needs one entry point; the hub itself shows what's connected. */}
+      <button
+        type="button"
+        onClick={() => onBrowse()}
+        className="group w-full flex items-center gap-3 px-3.5 py-3 rounded-xl ring-1 ring-dashed ring-border/60 hover:ring-border hover:bg-card transition-colors text-left"
+      >
+        <div className="shrink-0 w-7 h-7 rounded-lg bg-secondary flex items-center justify-center">
+          <Plus className="text-muted-foreground" size={13} strokeWidth={1.8} />
         </div>
-      </Section>
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] text-foreground">Add new skills</div>
+          <div className="text-[11.5px] text-muted-foreground">
+            Browse marketplaces and install plugins
+          </div>
+        </div>
+      </button>
       {plugins.length > 0 && (
         <Section icon={Package} label="Plugins" count={plugins.length}>
           {plugins.map((p) => (
@@ -2489,7 +2703,7 @@ function HomeView({
         </Section>
       )}
       {skills.length > 0 && (
-        <Section icon={Sparkles} label="Skills" count={skills.length}>
+        <Section icon={Sparkle} label="Skills" count={skills.length}>
           {skills.map((s) => (
             <SkillRow key={s.name} skill={s} />
           ))}
@@ -2553,19 +2767,10 @@ function MarketplacesHub({
   };
 
   return (
-    <div className="px-8 pt-8 pb-6 space-y-6">
-      <BackCrumb label="Installed" onClick={onBack} />
-      <header className="space-y-2">
-        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
-          <Store className="w-3 h-3" strokeWidth={1.8} />
-          Marketplaces
-        </div>
-        <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
-          {markets.length === 0
-            ? "None yet"
-            : `${markets.length} ${markets.length === 1 ? "marketplace" : "marketplaces"}`}
-        </h3>
-      </header>
+    <div className="px-8 pt-6 pb-6 space-y-6">
+      {/* No in-body header anymore — the panel's top-bar header is
+          the only label. Skips the duplicate "← INSTALLED" crumb +
+          giant "N marketplaces" serif that used to stack here. */}
 
       {markets.length === 0 && (
         <p className="text-[13px] text-muted-foreground italic">
@@ -2602,7 +2807,7 @@ function MarketplacesHub({
             {updating ? (
               <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
             ) : (
-              <Sparkles className="w-3 h-3" strokeWidth={1.8} />
+              <Sparkle className="w-3 h-3" strokeWidth={1.8} />
             )}
             Update all
           </button>
@@ -2688,22 +2893,12 @@ function MarketplaceAddView({
   };
 
   return (
-    <div className="px-8 pt-8 pb-6 space-y-6">
-      <BackCrumb label="Marketplaces" onClick={onBack} />
-      <header className="space-y-2">
-        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
-          <Plus className="w-3 h-3" strokeWidth={1.8} />
-          Add marketplace
-        </div>
-        <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
-          New source
-        </h3>
-        <p className="text-[12.5px] text-muted-foreground leading-relaxed">
-          A GitHub repo (<code className="font-mono">owner/repo</code>), a full URL, or a local
-          path. Claude Code will clone it into this space's plugin
-          directory.
-        </p>
-      </header>
+    <div className="px-8 pt-6 pb-6 space-y-6">
+      <p className="text-[12.5px] text-muted-foreground leading-relaxed">
+        A GitHub repo (<code className="font-mono">owner/repo</code>), a full URL, or a local
+        path. Claude Code will clone it into this space's plugin
+        directory.
+      </p>
       <form onSubmit={submit} className="space-y-3">
         <input
           type="text"
@@ -2774,8 +2969,7 @@ function MarketplaceView({
 
   if (!m) {
     return (
-      <div className="px-8 pt-8 pb-6 space-y-6">
-        <BackCrumb label="Marketplaces" onClick={onBack} />
+      <div className="px-8 pt-6 pb-6 space-y-6">
         <p className="text-sm italic text-muted-foreground">
           marketplace not found — it may have just been removed.
         </p>
@@ -2807,13 +3001,8 @@ function MarketplaceView({
   };
 
   return (
-    <div className="px-8 pt-8 pb-6 space-y-6">
-      <BackCrumb label="Marketplaces" onClick={onBack} />
-      <header className="space-y-2">
-        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
-          <Store className="w-3 h-3" strokeWidth={1.8} />
-          Marketplace
-        </div>
+    <div className="px-8 pt-6 pb-6 space-y-6">
+      <header className="space-y-1.5">
         <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
           {m.name}
         </h3>
@@ -2834,7 +3023,7 @@ function MarketplaceView({
           {updating ? (
             <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
           ) : (
-            <Sparkles className="w-3 h-3" strokeWidth={1.8} />
+            <Sparkle className="w-3 h-3" strokeWidth={1.8} />
           )}
           Update
         </button>
@@ -2928,14 +3117,8 @@ function PluginDetailView({
   const enabled = installed?.enabled ?? false;
 
   return (
-    <div className="px-8 pt-8 pb-6 space-y-6">
-      <BackCrumb label={backLabel} onClick={onBack} />
-
-      <header className="space-y-2">
-        <div className="flex items-center gap-2 text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
-          <Package className="w-3 h-3" strokeWidth={1.8} />
-          Plugin
-        </div>
+    <div className="px-8 pt-6 pb-6 space-y-6">
+      <header className="space-y-1.5">
         <h3 className="font-[family-name:var(--font-heading)] text-[26px] leading-[1.05] tracking-tight text-foreground">
           {title}
         </h3>
@@ -3091,7 +3274,7 @@ function PluginActions({
           {updating ? (
             <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.8} />
           ) : (
-            <Sparkles className="w-3 h-3" strokeWidth={1.8} />
+            <Sparkle className="w-3 h-3" strokeWidth={1.8} />
           )}
           Update
         </button>
@@ -3914,7 +4097,10 @@ function ArtifactNavButton({
       type="button"
       onClick={onToggle}
       title={open ? "Hide artifact panel" : "Show artifact panel"}
-      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+      className={cn(
+        "flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] uppercase hover:text-foreground transition-colors",
+        open ? "text-foreground" : "text-muted-foreground"
+      )}
     >
       <span className="hidden @lg:inline">Artifact</span>
       <AppWindow className="w-3.5 h-3.5" strokeWidth={1.8} />
@@ -3962,7 +4148,10 @@ function LibraryNavButton({
       type="button"
       onClick={onToggle}
       title={open ? "Hide library" : "Show library"}
-      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+      className={cn(
+        "flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] uppercase hover:text-foreground transition-colors",
+        open ? "text-foreground" : "text-muted-foreground"
+      )}
     >
       <span className="hidden @lg:inline">Library</span>
       <BookOpen className="w-3.5 h-3.5" strokeWidth={1.8} />
@@ -3973,6 +4162,15 @@ function LibraryNavButton({
 // Map file extensions to lucide icons. Anything unmapped falls back
 // to FileText. Keeping this set tight on purpose — we'd rather a few
 // "generic file" icons than a wall of ad-hoc images.
+// Files we render as rich Markdown in the Library viewer instead of
+// plain monospace. .markdown / .mdx are rare but cheap to include.
+const MARKDOWN_EXTS = new Set([".md", ".markdown", ".mdx"]);
+
+function isMarkdownFile(entry: LibraryEntry | null): boolean {
+  if (!entry) return false;
+  return !!entry.ext && MARKDOWN_EXTS.has(entry.ext);
+}
+
 function libraryIconFor(entry: LibraryEntry): typeof FileText {
   if (entry.type === "dir") return Folder;
   switch (entry.ext) {
@@ -4199,14 +4397,28 @@ function LibraryPanel({
                   loading…
                 </div>
               ) : filePayload?.kind === "text" ? (
-                <pre className="px-6 py-4 text-[12px] leading-relaxed font-mono whitespace-pre-wrap break-words">
-                  {filePayload.content}
-                  {filePayload.truncated && (
-                    <span className="block mt-4 text-[11px] text-muted-foreground italic">
-                      … truncated at 5 MB ({formatSize(filePayload.size)} total)
-                    </span>
-                  )}
-                </pre>
+                isMarkdownFile(selected) ? (
+                  // Render .md / .markdown files using the same Markdown
+                  // component the chat stream uses, so the typography is
+                  // consistent app-wide.
+                  <div className="px-6 py-4 text-[13px] leading-relaxed text-foreground">
+                    <Markdown tone="light">{filePayload.content}</Markdown>
+                    {filePayload.truncated && (
+                      <p className="mt-4 text-[11px] text-muted-foreground italic">
+                        … truncated at 5 MB ({formatSize(filePayload.size)} total)
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <pre className="px-6 py-4 text-[12px] leading-relaxed font-mono whitespace-pre-wrap break-words">
+                    {filePayload.content}
+                    {filePayload.truncated && (
+                      <span className="block mt-4 text-[11px] text-muted-foreground italic">
+                        … truncated at 5 MB ({formatSize(filePayload.size)} total)
+                      </span>
+                    )}
+                  </pre>
+                )
               ) : filePayload?.kind === "binary" ? (
                 <div className="px-6 py-4 text-[12px] text-muted-foreground italic">
                   binary file ({formatSize(filePayload.size)}) — preview not
@@ -4421,7 +4633,10 @@ const PLUGIN_ICONS: Record<string, typeof Activity> = {
   CheckSquare: SquareCheckBig,
   Clock,
   CalendarClock,
-  Sparkles,
+  // Both names map to the same single-sparkle icon — plugins
+  // declaring "Sparkles" or "Sparkle" both work.
+  Sparkle,
+  Sparkles: Sparkle,
   BookOpen,
   Globe,
   AppWindow,
@@ -5293,7 +5508,10 @@ function SchedulesNavButton({
       type="button"
       onClick={onToggle}
       title={open ? "Hide schedules panel" : "Show schedules panel"}
-      className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase hover:text-foreground transition-colors"
+      className={cn(
+        "flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] uppercase hover:text-foreground transition-colors",
+        open ? "text-foreground" : "text-muted-foreground"
+      )}
     >
       <span className="hidden @lg:inline">Schedules</span>
       <CalendarClock className="w-3.5 h-3.5" strokeWidth={1.8} />

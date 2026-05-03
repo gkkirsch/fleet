@@ -6,8 +6,8 @@
 //  - POST /api/agents/:id/notify      → shell out to `roster notify`
 //  - Static: /dist built React app embedded via go:embed (in prod).
 //
-// Dev mode: run this binary at :8080, then `npm run dev` in web/ at :5173
-// with a Vite proxy forwarding /api to :8080.
+// Dev mode: run this binary at :47821, then `npm run dev` in web/ at :5173
+// with a Vite proxy forwarding /api to :47821.
 package main
 
 import (
@@ -34,7 +34,7 @@ var inspectorJS []byte
 
 // SPA bundle. Built by `cd web && npm run build`. Empty in dev (Vite
 // runs separately on :5173 and proxies /api here); populated for
-// release builds so the single binary serves everything on :8080.
+// release builds so the single binary serves everything on :47821.
 //
 //go:embed all:web/dist
 var spaFS embed.FS
@@ -826,7 +826,7 @@ func spaHandler() http.HandlerFunc {
 	}
 }
 
-// withCORS lets the Vite dev server on :5173 hit :8080 freely.
+// withCORS lets the Vite dev server on :5173 hit :47821 freely.
 func withCORS(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -843,7 +843,14 @@ func withCORS(h http.Handler) http.Handler {
 // --- main ------------------------------------------------------------------
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:8080", "listen address (localhost-only by default)")
+	// Default port mirrors director-app's pick (avoids the 8080 brawl).
+	// Honors $DIRECTOR_PORT so dev workflows can override without
+	// passing --addr.
+	defaultAddr := "127.0.0.1:47821"
+	if p := os.Getenv("DIRECTOR_PORT"); p != "" {
+		defaultAddr = "127.0.0.1:" + p
+	}
+	addr := flag.String("addr", defaultAddr, "listen address (localhost-only by default)")
 	flag.Parse()
 
 	if v := os.Getenv("ROSTER_BIN"); v != "" {

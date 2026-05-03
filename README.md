@@ -24,7 +24,7 @@ Prereqs (the script will tell you what's missing): `tmux`, `node`,
 Then:
 
 ```bash
-fleetview &                   # dashboard at http://localhost:8080
+fleetview &                   # dashboard at http://localhost:47821
 roster spawn director --kind dispatcher --description "routes user requests"
 ```
 
@@ -66,8 +66,8 @@ the work needs.
 make build              # builds Go binary + Vite UI
 
 # dev — two processes
-./fleetview             # backend on :8080
-cd web && npm run dev   # Vite dev server on :5173 (proxies /api to :8080)
+./fleetview             # backend on :47821
+cd web && npm run dev   # Vite dev server on :5173 (proxies /api to :47821)
 
 # then open http://localhost:5173
 ```

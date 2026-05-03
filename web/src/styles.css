@@ -196,29 +196,42 @@
 
 /* -------------------------------------------------------------------------
    Calm scrollbar — blends with the linen background instead of flashing a
-   white track next to the panel content. Applied via .scrollbar-calm.
+   white track. Apply via .scrollbar-calm OR rely on the global default
+   below; both produce the same look. The global rule covers panes that
+   become scrollable without an explicit class (markdown bodies, plugin
+   sheets, the library content area, etc) so widths stay consistent.
    ------------------------------------------------------------------------- */
-.scrollbar-calm {
+.scrollbar-calm,
+.plugin-sheet-body {
     scrollbar-width: thin;
     scrollbar-color: color-mix(in oklch, var(--stone) 40%, transparent) transparent;
 }
-.scrollbar-calm::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+/* Force the slim 6px size everywhere with !important. macOS'
+   "Always show scrollbars" appearance setting + WebKit's default
+   styling can otherwise show 12-15px native bars on overflow:auto
+   panes (visible on tables and code blocks especially). */
+*::-webkit-scrollbar {
+    width: 6px !important;
+    height: 6px !important;
 }
-.scrollbar-calm::-webkit-scrollbar-track {
-    background: transparent;
+*::-webkit-scrollbar-track {
+    background: transparent !important;
 }
-.scrollbar-calm::-webkit-scrollbar-thumb {
-    background: color-mix(in oklch, var(--stone) 35%, transparent);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
+*::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--stone) 35%, transparent) !important;
+    border-radius: 999px !important;
 }
-.scrollbar-calm::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in oklch, var(--stone) 60%, transparent);
-    background-clip: padding-box;
+*::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--stone) 60%, transparent) !important;
 }
+/* Firefox / standards fallback — same shrink behavior. */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--stone) 40%, transparent) transparent;
+}
+/* Opt-out for elements that should NOT show a scrollbar at all
+   (e.g. .scrollbar-none on the chat composer). */
+.scrollbar-none::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 /* Used on the chat input — content should still scroll past the height
    cap, but the scrollbar is intentionally invisible so the box reads
