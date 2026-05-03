@@ -229,3 +229,43 @@
 .scrollbar-none::-webkit-scrollbar {
     display: none;
 }
+
+/* Plugin sheet body — host-provided defaults so plugin templates
+   stay minimal. Plugins write plain semantic HTML; this stylesheet
+   gives them a flat checkbox, decent typography, and consistent
+   spacing without each template re-deriving those values. */
+.plugin-sheet-body {
+    color: var(--foreground);
+}
+.plugin-sheet-body input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    flex-shrink: 0;
+    position: relative;
+    transition: background 120ms ease, border-color 120ms ease;
+    margin: 0;
+}
+.plugin-sheet-body input[type="checkbox"]:hover {
+    border-color: color-mix(in oklch, var(--foreground) 50%, var(--border));
+}
+.plugin-sheet-body input[type="checkbox"]:checked {
+    background: var(--foreground);
+    border-color: var(--foreground);
+}
+.plugin-sheet-body input[type="checkbox"]:checked::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 4px;
+    height: 8px;
+    border: solid var(--background);
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+}

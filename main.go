@@ -732,6 +732,10 @@ func router() http.Handler {
 			handleLibrary(w, r, id)
 		case "library/file":
 			handleLibraryFile(w, r, id)
+		case "menu-items":
+			handleMenuItems(w, r, id)
+		case "plugin-asset":
+			handlePluginAsset(w, r, id)
 		case "interrupt":
 			if r.Method != http.MethodPost {
 				http.Error(w, "method", http.StatusMethodNotAllowed)
@@ -757,6 +761,10 @@ func router() http.Handler {
 			}
 			if strings.HasPrefix(sub, "schedules") {
 				handleSchedules(w, r, id, strings.TrimPrefix(sub, "schedules"))
+				return
+			}
+			if strings.HasPrefix(sub, "data/") {
+				handlePluginData(w, r, id, strings.TrimPrefix(sub, "data"))
 				return
 			}
 			http.Error(w, "unknown subresource", http.StatusNotFound)

@@ -117,7 +117,16 @@ export function App() {
   const schedulesPanel = useSchedulesPanel();
   const libraryPanel = useLibraryPanel();
   const sidebar = useFleetSidebar();
-  // Mutually-exclusive panels — opening one auto-closes the others.
+  // Plugin menu state lives here so the sheets render at App level
+  // (siblings of other panels), not inside TopNav's flex row. Declared
+  // before the toggles so they can close the plugin menu via deps.
+  // Note: agent for usePluginMenu is computed below as `selected`,
+  // but we'd hit a TDZ. So we re-derive it inline here.
+  const dispatcherForMenu =
+    pickedId ?? agents?.find((a) => a.kind === "dispatcher")?.id ?? null;
+  const selectedForMenu =
+    agents?.find((a) => a.id === dispatcherForMenu) ?? null;
+  const pluginMenu = usePluginMenu(selectedForMenu);
   // Right-rail panels are mutually exclusive — opening one closes the
   // others. Keeps the single 400-720px slot from being fought over.
   const toggleSettings = useCallback(() => {
@@ -125,33 +134,37 @@ export function App() {
       artifactPanel.close();
       schedulesPanel.close();
       libraryPanel.close();
+      pluginMenu.setOpenId(null);
     }
     panel.toggle();
-  }, [panel, artifactPanel, schedulesPanel, libraryPanel]);
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel, pluginMenu]);
   const toggleArtifact = useCallback(() => {
     if (!artifactPanel.open) {
       panel.close();
       schedulesPanel.close();
       libraryPanel.close();
+      pluginMenu.setOpenId(null);
     }
     artifactPanel.toggle();
-  }, [panel, artifactPanel, schedulesPanel, libraryPanel]);
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel, pluginMenu]);
   const toggleSchedules = useCallback(() => {
     if (!schedulesPanel.open) {
       panel.close();
       artifactPanel.close();
       libraryPanel.close();
+      pluginMenu.setOpenId(null);
     }
     schedulesPanel.toggle();
-  }, [panel, artifactPanel, schedulesPanel, libraryPanel]);
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel, pluginMenu]);
   const toggleLibrary = useCallback(() => {
     if (!libraryPanel.open) {
       panel.close();
       artifactPanel.close();
       schedulesPanel.close();
+      pluginMenu.setOpenId(null);
     }
     libraryPanel.toggle();
-  }, [panel, artifactPanel, schedulesPanel, libraryPanel]);
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel, pluginMenu]);
   // Map of agent id → timestamp of a just-sent message. Used to show the
   // thinking shimmer immediately, before backend polling catches up to the
   // agent entering "streaming" state. Cleared by the effect below.
@@ -211,6 +224,25 @@ export function App() {
   }, [selectedId]);
 
   const selected = agents?.find((a) => a.id === selectedId) ?? null;
+  // Plugin menu items + open state. Lifted to App so the sheets
+  // render as siblings of other right-rail panels (Library/Schedules)
+  // — putting them inside TopNav's flex row would steal width from
+  // the buttons.
+  const togglePluginItem = useCallback(
+    (id: string) => {
+      pluginMenu.setOpenId((cur) => {
+        const next = cur === id ? null : id;
+        if (next !== null) {
+          panel.close();
+          artifactPanel.close();
+          schedulesPanel.close();
+          libraryPanel.close();
+        }
+        return next;
+      });
+    },
+    [pluginMenu, panel, artifactPanel, schedulesPanel, libraryPanel]
+  );
 
   // Clear per-agent pending flags once the backend has caught up (status
   // flipped to streaming — the shimmer keeps rendering from that source).
@@ -294,6 +326,9 @@ export function App() {
           onToggleSchedulesPanel={toggleSchedules}
           libraryPanelOpen={libraryPanel.open}
           onToggleLibraryPanel={toggleLibrary}
+          pluginMenuItems={pluginMenu.items}
+          pluginMenuOpenId={pluginMenu.openId}
+          onTogglePluginMenu={togglePluginItem}
           sidebarOpen={sidebar.open}
           onToggleSidebar={sidebar.toggle}
         />
@@ -317,6 +352,15 @@ export function App() {
         open={libraryPanel.open}
         onClose={libraryPanel.close}
       />
+      {selected && pluginMenu.items.map((mi) => (
+        <PluginViewSheet
+          key={`sheet-${mi.plugin}/${mi.id}`}
+          agent={selected}
+          item={mi}
+          open={pluginMenu.openId === mi.id}
+          onClose={() => pluginMenu.setOpenId(null)}
+        />
+      ))}
     </div>
   );
 }
@@ -742,6 +786,9 @@ function Detail({
   onToggleSchedulesPanel,
   libraryPanelOpen,
   onToggleLibraryPanel,
+  pluginMenuItems,
+  pluginMenuOpenId,
+  onTogglePluginMenu,
   sidebarOpen,
   onToggleSidebar,
 }: {
@@ -758,6 +805,9 @@ function Detail({
   onToggleSchedulesPanel: () => void;
   libraryPanelOpen: boolean;
   onToggleLibraryPanel: () => void;
+  pluginMenuItems: PluginMenuItem[];
+  pluginMenuOpenId: string | null;
+  onTogglePluginMenu: (id: string) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }) {
@@ -774,6 +824,9 @@ function Detail({
           onToggleSchedulesPanel={onToggleSchedulesPanel}
           libraryPanelOpen={libraryPanelOpen}
           onToggleLibraryPanel={onToggleLibraryPanel}
+          pluginMenuItems={pluginMenuItems}
+          pluginMenuOpenId={pluginMenuOpenId}
+          onTogglePluginMenu={onTogglePluginMenu}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={onToggleSidebar}
         />
@@ -795,6 +848,9 @@ function Detail({
         onToggleSchedulesPanel={onToggleSchedulesPanel}
         libraryPanelOpen={libraryPanelOpen}
         onToggleLibraryPanel={onToggleLibraryPanel}
+        pluginMenuItems={pluginMenuItems}
+        pluginMenuOpenId={pluginMenuOpenId}
+        onTogglePluginMenu={onTogglePluginMenu}
         sidebarOpen={sidebarOpen}
         onToggleSidebar={onToggleSidebar}
       />
@@ -837,6 +893,9 @@ function TopNav({
   onToggleSchedulesPanel,
   libraryPanelOpen,
   onToggleLibraryPanel,
+  pluginMenuItems,
+  pluginMenuOpenId,
+  onTogglePluginMenu,
   sidebarOpen,
   onToggleSidebar,
 }: {
@@ -849,14 +908,21 @@ function TopNav({
   onToggleSchedulesPanel: () => void;
   libraryPanelOpen: boolean;
   onToggleLibraryPanel: () => void;
+  pluginMenuItems: PluginMenuItem[];
+  pluginMenuOpenId: string | null;
+  onTogglePluginMenu: (id: string) => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }) {
   const SettingsIcon = panelOpen ? PanelRightClose : PanelRight;
   const SidebarIcon = sidebarOpen ? PanelLeftClose : PanelLeft;
+  // Strip itself is transparent — only the button group pill below
+  // carries the bg+blur. This stops the full-width blur from
+  // smearing scrolled chat content across the gap between the
+  // traffic-light area and the buttons.
   return (
-    <div className="@container absolute top-0 left-0 right-0 z-20 flex items-center justify-end gap-5 px-10 pt-8 pb-3 bg-background/[0.03] backdrop-blur-[2px]">
-      <div className="flex items-center justify-end gap-5">
+    <div className="@container absolute top-0 left-0 right-0 z-20 flex items-center justify-end gap-5 px-10 pt-8 pb-3 pointer-events-none">
+      <div className="flex items-center justify-end gap-5 pointer-events-auto rounded-full bg-background/60 backdrop-blur-md px-4 py-1.5">
         {/* Workers inherit their orch's browser, schedules, plugins —
             none of those are user-actionable at the worker level. Keep
             the worker's top bar empty so it reads as a focused
@@ -867,6 +933,13 @@ function TopNav({
         )}
         {agent?.kind === "orchestrator" && (
           <LibraryNavButton agent={agent} open={libraryPanelOpen} onToggle={onToggleLibraryPanel} />
+        )}
+        {agent && (
+          <PluginMenuButtons
+            items={pluginMenuItems}
+            openId={pluginMenuOpenId}
+            onToggle={onTogglePluginMenu}
+          />
         )}
         {agent && agent.kind !== "worker" && (
           <SchedulesNavButton agent={agent} open={schedulesPanelOpen} onToggle={onToggleSchedulesPanel} />
@@ -1348,10 +1421,30 @@ function ClippedMarkdown({ text }: { text: string }) {
   );
 }
 
+// Synthetic claude-code messages: when the user clicks Stop mid-tool,
+// the JSONL records one of these as a fake user turn. They're noise in
+// the chat stream — render as a small centered caption, not a bubble.
+const SYNTHETIC_USER_MESSAGES = new Set([
+  "[Request interrupted by user]",
+  "[Request interrupted by user for tool use]",
+]);
+
+function isSyntheticUserMessage(text?: string): boolean {
+  if (!text) return false;
+  return SYNTHETIC_USER_MESSAGES.has(text.trim());
+}
+
 function MessageRow({ m, agentKind }: { m: Message; agentKind?: string }) {
   // Two sides: user on the right (our side), assistant/agent on the left.
   // Tool blocks render centered, inline, in a muted style.
   if (m.role === "user") {
+    if (isSyntheticUserMessage(m.text)) {
+      return (
+        <div className="text-center text-[11px] italic text-muted-foreground py-1">
+          interrupted
+        </div>
+      );
+    }
     const sender = agentRelaySender(m.text);
     // The dispatcher is the user-facing surface; cross-agent chatter
     // is noise there. In every OTHER pane (orchestrator, worker) the
@@ -2170,7 +2263,7 @@ function ThreadPanel({
       )}
     >
       {open && (
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col w-[340px] xl:w-[380px]">
           {route.kind === "home" && (
             <PanelHeader agent={agent} view={data} route={route} />
           )}
@@ -4048,130 +4141,53 @@ function LibraryPanel({
     <aside
       className={cn(
         "shrink-0 border-l border-border/60 bg-sidebar h-full overflow-hidden transition-[width] duration-200 ease-in-out",
-        visible ? "w-[560px] max-w-[60vw]" : "w-0 border-l-0"
+        visible ? "w-[340px] xl:w-[380px]" : "w-0 border-l-0"
       )}
     >
       {visible && agent && (
-      <div className="h-full flex">
-      <div className="flex flex-col w-[280px] min-w-[240px] border-r border-border/60 bg-sidebar">
-        <div className="flex items-center gap-2 px-5 pt-8 pb-3 border-b border-border/50">
-          <BookOpen className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.8} />
-          <span className="text-[10px] font-medium tracking-[0.22em] uppercase text-muted-foreground">
-            Library
-          </span>
-        </div>
-        {/* Breadcrumb */}
-        <div className="flex flex-wrap items-center gap-1 px-5 py-2 text-[12px] text-muted-foreground border-b border-border/40 min-h-[34px]">
-          <button
-            type="button"
-            onClick={() => {
-              setPath("");
-              setSelected(null);
-            }}
-            className="hover:text-foreground"
-            title={agent.id}
-          >
-            {agent.id}
-          </button>
-          {segments.map((seg, i) => {
-            const next = segments.slice(0, i + 1).join("/");
-            return (
-              <span key={i} className="flex items-center gap-1">
-                <ChevronRight className="w-3 h-3 opacity-50" strokeWidth={1.8} />
+        <div className="h-full flex flex-col w-[340px] xl:w-[380px]">
+          {/* Header — same shape as SchedulesPanel. When viewing a file
+              the icon flips to a back arrow that returns to the listing. */}
+          <div className="flex items-center justify-between px-6 pt-7 pb-3">
+            <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+              {selected ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    setPath(next);
-                    setSelected(null);
-                  }}
-                  className="hover:text-foreground"
+                  onClick={() => setSelected(null)}
+                  className="flex items-center gap-2 hover:text-foreground transition-colors"
+                  title="Back to listing"
                 >
-                  {seg}
+                  <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.8} />
+                  <span className="truncate max-w-[200px] normal-case tracking-normal text-[12px] font-normal text-foreground">
+                    {selected.name}
+                  </span>
                 </button>
-              </span>
-            );
-          })}
-        </div>
-        {/* Listing */}
-        <div className="flex-1 overflow-y-auto">
-          {error ? (
-            <div className="px-5 py-4 text-[12px] text-[color:var(--clay)]">
-              {error}
+              ) : (
+                <>
+                  <BookOpen className="w-3.5 h-3.5" strokeWidth={1.8} />
+                  <span>Library</span>
+                </>
+              )}
             </div>
-          ) : entries == null ? (
-            <div className="px-5 py-4 text-[12px] text-muted-foreground italic">
-              loading…
-            </div>
-          ) : entries.length === 0 ? (
-            <div className="px-5 py-4 text-[12px] text-muted-foreground italic">
-              empty
-            </div>
-          ) : (
-            <ul className="py-1">
-              {entries.map((e) => {
-                const Icon = libraryIconFor(e);
-                const isSel =
-                  selected?.name === e.name && selected?.type === e.type;
-                return (
-                  <li key={e.name}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (e.type === "dir") {
-                          setPath(path ? `${path}/${e.name}` : e.name);
-                          setSelected(null);
-                        } else {
-                          setSelected(e);
-                        }
-                      }}
-                      className={cn(
-                        "flex items-center gap-2 w-full px-5 py-1.5 text-left text-[13px]",
-                        isSel
-                          ? "bg-secondary text-foreground"
-                          : "text-foreground/90 hover:bg-secondary/50"
-                      )}
-                    >
-                      <Icon
-                        className={cn(
-                          "w-3.5 h-3.5 shrink-0",
-                          e.type === "dir"
-                            ? "text-[color:var(--primary)]"
-                            : "text-muted-foreground"
-                        )}
-                        strokeWidth={1.8}
-                      />
-                      <span className="truncate flex-1">{e.name}</span>
-                      {e.type === "file" && (
-                        <span className="text-[10px] text-muted-foreground tabular-nums">
-                          {formatSize(e.size)}
-                        </span>
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </div>
-      {/* Preview */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        {selected ? (
-          <>
-            <div className="px-6 pt-8 pb-3 border-b border-border/60 flex items-center justify-between">
-              <div className="min-w-0">
-                <div className="text-[14px] font-medium truncate">
-                  {selected.name}
-                </div>
-                <div className="text-[11px] text-muted-foreground tabular-nums">
-                  {formatSize(selected.size)} · {selected.ext || "file"}
-                </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Close library panel"
+            >
+              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+            </button>
+          </div>
+
+          {/* Body — listing OR file viewer. Replacing-not-splitting so
+              the panel stays the same width as Schedules/Skills. */}
+          {selected ? (
+            <div className="scrollbar-calm flex-1 min-h-0 overflow-auto">
+              <div className="px-6 pt-2 pb-2 text-[11px] text-muted-foreground tabular-nums">
+                {formatSize(selected.size)} · {selected.ext || "file"}
               </div>
-            </div>
-            <div className="flex-1 overflow-auto">
               {imageSrc ? (
-                <div className="p-6 flex items-center justify-center">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                <div className="p-4 flex items-center justify-center">
                   <img
                     src={imageSrc}
                     alt={selected.name}
@@ -4202,17 +4218,610 @@ function LibraryPanel({
                 </div>
               )}
             </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-[12px] text-muted-foreground italic">
-            select a file
-          </div>
-        )}
-      </div>
-      </div>
+          ) : (
+            <>
+              {/* Breadcrumb (only relevant in listing mode) */}
+              {segments.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 px-6 pb-2 text-[11px] text-muted-foreground">
+                  <button
+                    type="button"
+                    onClick={() => setPath("")}
+                    className="hover:text-foreground"
+                  >
+                    /
+                  </button>
+                  {segments.map((seg, i) => {
+                    const next = segments.slice(0, i + 1).join("/");
+                    const isLast = i === segments.length - 1;
+                    return (
+                      <span key={i} className="flex items-center gap-1">
+                        <ChevronRight className="w-3 h-3 opacity-50" strokeWidth={1.8} />
+                        <button
+                          type="button"
+                          onClick={() => setPath(next)}
+                          className={cn(
+                            "hover:text-foreground",
+                            isLast && "text-foreground"
+                          )}
+                        >
+                          {seg}
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto">
+                {error ? (
+                  <div className="px-6 py-4 text-[12px] text-[color:var(--clay)]">
+                    {error}
+                  </div>
+                ) : entries == null ? (
+                  <div className="px-6 py-4 text-[12px] text-muted-foreground italic">
+                    loading…
+                  </div>
+                ) : entries.length === 0 ? (
+                  <div className="px-6 py-4 text-[12px] text-muted-foreground italic">
+                    empty
+                  </div>
+                ) : (
+                  <ul className="py-1">
+                    {entries.map((e) => {
+                      const Icon = libraryIconFor(e);
+                      return (
+                        <li key={e.name}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (e.type === "dir") {
+                                setPath(path ? `${path}/${e.name}` : e.name);
+                                setSelected(null);
+                              } else {
+                                setSelected(e);
+                              }
+                            }}
+                            className="flex items-center gap-2 w-full px-6 py-1.5 text-left text-[13px] text-foreground/90 hover:bg-secondary/40"
+                          >
+                            <Icon
+                              className={cn(
+                                "w-3.5 h-3.5 shrink-0",
+                                e.type === "dir"
+                                  ? "text-[color:var(--primary)]"
+                                  : "text-muted-foreground"
+                              )}
+                              strokeWidth={1.8}
+                            />
+                            <span className="truncate flex-1">{e.name}</span>
+                            {e.type === "file" && (
+                              <span className="text-[10px] text-muted-foreground tabular-nums">
+                                {formatSize(e.size)}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       )}
     </aside>
   );
+}
+
+// ─── plugin menu items ───────────────────────────────────────────
+//
+// Plugins can declare top-bar menu items in their config.json. Each
+// item points at a JSON data source (file glob under one of the orch's
+// roots) and a template HTML file. The runtime here renders the
+// template inline (NOT via iframe — same-origin lets us style/event
+// the result with the rest of the app), wires the small set of
+// data-action / {{}} / data-loop hooks, and POSTs mutations back to
+// director-server.
+//
+// HTML sanitization: plugins are user-installed, so we treat their
+// templates as untrusted. We strip <script>, on* event handlers, and
+// any javascript:/data: URLs at parse time. Allowed tags + attributes
+// are listed in TEMPLATE_ALLOWED below.
+
+type PluginMenuItem = {
+  id: string;
+  label: string;
+  icon?: string;
+  agent_kinds?: string[];
+  data: {
+    kind: "file-per-item" | "merged-list";
+    root: "claude_dir" | "cwd" | "library";
+    glob: string;
+    id_field?: string;
+  };
+  template?: string;
+  plugin: string;
+};
+
+// Hook used by App to track which plugin menu item is open. Returned
+// shape: items list, openId, setOpenId. Items are re-polled every
+// 10s so newly-installed plugins surface.
+function usePluginMenu(agent: Agent | null) {
+  const [items, setItems] = useState<PluginMenuItem[] | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!agent) {
+      setItems(null);
+      return;
+    }
+    let stop = false;
+    const tick = () => {
+      fetch(`/api/agents/${agent.id}/menu-items`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((d: PluginMenuItem[]) => {
+          if (!stop) setItems(Array.isArray(d) ? d : []);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const h = setInterval(tick, 10_000);
+    return () => {
+      stop = true;
+      clearInterval(h);
+    };
+  }, [agent?.id]);
+
+  // Reset selection when switching agents.
+  useEffect(() => {
+    setOpenId(null);
+  }, [agent?.id]);
+
+  return { items: items ?? [], openId, setOpenId };
+}
+
+// Buttons-only — sheets are rendered separately at the App level so
+// they don't take width inside the TopNav flex row.
+function PluginMenuButtons({
+  items,
+  openId,
+  onToggle,
+}: {
+  items: PluginMenuItem[];
+  openId: string | null;
+  onToggle: (id: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((mi) => (
+        <button
+          key={`${mi.plugin}/${mi.id}`}
+          type="button"
+          onClick={() => onToggle(mi.id)}
+          title={`${mi.label} (${mi.plugin})`}
+          className={cn(
+            "flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] uppercase hover:text-foreground transition-colors",
+            openId === mi.id ? "text-foreground" : "text-muted-foreground"
+          )}
+        >
+          <span className="hidden @lg:inline">{mi.label}</span>
+          <PluginIcon name={mi.icon} />
+        </button>
+      ))}
+    </>
+  );
+}
+
+// Lucide icons can't be looked up by string at runtime without a map,
+// so plugins reference a small, frozen vocab. Unknown names fall back
+// to a generic dot to avoid render errors.
+const PLUGIN_ICONS: Record<string, typeof Activity> = {
+  ListTodo: SquareCheckBig,
+  CheckSquare: SquareCheckBig,
+  Clock,
+  CalendarClock,
+  Sparkles,
+  BookOpen,
+  Globe,
+  AppWindow,
+  Workflow,
+};
+
+function PluginIcon({ name }: { name?: string }) {
+  const Icon = (name && PLUGIN_ICONS[name]) || Activity;
+  return <Icon className="w-3.5 h-3.5" strokeWidth={1.8} />;
+}
+
+// PluginViewSheet renders a plugin's menu item as the same right-rail
+// aside as Library/Schedules/Skills.
+function PluginViewSheet({
+  agent,
+  item,
+  open,
+  onClose,
+}: {
+  agent: Agent;
+  item: PluginMenuItem;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [tplHtml, setTplHtml] = useState<string | null>(null);
+  const [data, setData] = useState<any[] | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Fetch template once when first opened. Templates rarely change
+  // mid-session — re-fetch only when the panel is opened again from
+  // a closed state.
+  useEffect(() => {
+    if (!open || !item.template) return;
+    let stop = false;
+    fetch(
+      `/api/agents/${agent.id}/plugin-asset?plugin=${encodeURIComponent(
+        item.plugin
+      )}&path=${encodeURIComponent(item.template)}`
+    )
+      .then((r) => (r.ok ? r.text() : ""))
+      .then((t) => {
+        if (!stop) setTplHtml(t);
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, [open, agent.id, item.plugin, item.template]);
+
+  // Re-poll data periodically while open. The orch can write tasks
+  // any time; we want the UI to reflect new ones without a refresh.
+  useEffect(() => {
+    if (!open) return;
+    let stop = false;
+    const tick = () => {
+      fetch(
+        `/api/agents/${agent.id}/data/${encodeURIComponent(
+          item.plugin
+        )}/${encodeURIComponent(item.id)}`
+      )
+        .then((r) => (r.ok ? r.json() : []))
+        .then((d) => {
+          if (!stop) setData(Array.isArray(d) ? d : []);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const h = setInterval(tick, 3_000);
+    return () => {
+      stop = true;
+      clearInterval(h);
+    };
+  }, [open, agent.id, item.plugin, item.id]);
+
+  // Render template with current data into the container, then wire
+  // events. Re-render on every data change.
+  useEffect(() => {
+    if (!open || !tplHtml || !containerRef.current || !data) return;
+    const html = renderPluginTemplate(tplHtml, data);
+    containerRef.current.innerHTML = html;
+    const off = wirePluginEvents(containerRef.current, agent, item, () => {
+      // Optimistic-ish: trigger a re-fetch immediately so the UI
+      // catches up after a click without waiting for the 3s poll.
+      fetch(
+        `/api/agents/${agent.id}/data/${encodeURIComponent(
+          item.plugin
+        )}/${encodeURIComponent(item.id)}`
+      )
+        .then((r) => (r.ok ? r.json() : []))
+        .then((d) => setData(Array.isArray(d) ? d : []))
+        .catch(() => {});
+    });
+    return off;
+  }, [open, tplHtml, data, agent.id, item.id, item.plugin]);
+
+  return (
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-sidebar h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[340px] xl:w-[380px]" : "w-0 border-l-0"
+      )}
+    >
+      {open && (
+        <div className="h-full flex flex-col w-[340px] xl:w-[380px]">
+          {/* Header matches SchedulesPanel exactly so all plugin
+              sheets (and the built-in ones) read as siblings. */}
+          <div className="flex items-center justify-between px-6 pt-7 pb-3">
+            <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+              <PluginIcon name={item.icon} />
+              <span>{item.label}</span>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title={`Close ${item.label.toLowerCase()} panel`}
+            >
+              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+            </button>
+          </div>
+          {/* Default body styles live here (padding, typography, flat
+              checkbox via plugin-sheet-body class in styles.css), NOT
+              in plugin templates. Keeps every plugin's sheet visually
+              consistent with Library/Schedules without each plugin
+              author re-deriving these values. */}
+          <div
+            ref={containerRef}
+            className="plugin-sheet-body scrollbar-calm flex-1 min-h-0 overflow-y-auto px-6 pt-6 pb-6"
+          />
+        </div>
+      )}
+    </aside>
+  );
+}
+
+// ── template rendering ──────────────────────────────────────────
+//
+// Tiny templating pass:
+//   {{field}}             interpolated from the current item
+//   data-loop="<group>"   repeat element per item (or per group, if
+//                         the data source supplies grouped items via
+//                         a derived `status` field — used by tasks)
+//   data-when="<expr>"    render only if expression truthy
+//   data-bind="<p>=<e>"   not yet (we set checked/href via {{ }} for v1)
+//
+// We handle data-action wiring after innerHTML, in wirePluginEvents.
+
+function renderPluginTemplate(tpl: string, data: any[]): string {
+  // Sanitize by parsing into a detached document and stripping
+  // disallowed tags/attributes, THEN expanding loops + interpolation.
+  const doc = new DOMParser().parseFromString(
+    `<div id="__root">${tpl}</div>`,
+    "text/html"
+  );
+  const root = doc.getElementById("__root");
+  if (!root) return "";
+  sanitizeNode(root);
+
+  // Build groups dictionary: full + per-status (tasks-style).
+  const grouped: Record<string, any[]> = { data };
+  for (const item of data) {
+    const s = String(item?.status ?? "");
+    if (s) (grouped[s] ||= []).push(item);
+  }
+
+  // Process data-when based on simple counts (data.length).
+  evaluateWhen(root, grouped);
+
+  // Process data-loop: replace the loop element with N copies, each
+  // bound to its item.
+  expandLoops(root, grouped);
+
+  // Final pass: interpolate {{field}} in text + attributes everywhere
+  // (top-level expressions only; loop bodies are interpolated inside
+  // the loop scope).
+  interpolateTree(root, { data, length: data.length } as any);
+
+  return root.innerHTML;
+}
+
+const TEMPLATE_ALLOWED_TAGS = new Set([
+  "section", "div", "ul", "ol", "li", "h1", "h2", "h3", "h4", "p",
+  "span", "a", "strong", "em", "b", "i", "small", "label", "input",
+  "button", "form", "br", "hr", "img", "svg", "path", "circle",
+  "rect", "g", "style"
+]);
+
+const TEMPLATE_ALLOWED_ATTRS = new Set([
+  "class", "id", "title", "href", "target", "rel", "type", "name",
+  "value", "checked", "disabled", "placeholder", "for", "src", "alt",
+  "width", "height", "viewbox", "fill", "stroke", "stroke-width",
+  "d", "x", "y", "cx", "cy", "r",
+  "data-loop", "data-when", "data-bind", "data-action",
+  "data-id", "data-file"
+]);
+
+function sanitizeNode(node: Node) {
+  if (node.nodeType === 1) {
+    const el = node as Element;
+    const tag = el.tagName.toLowerCase();
+    if (!TEMPLATE_ALLOWED_TAGS.has(tag)) {
+      el.remove();
+      return;
+    }
+    for (const a of Array.from(el.attributes)) {
+      const name = a.name.toLowerCase();
+      if (!TEMPLATE_ALLOWED_ATTRS.has(name)) {
+        el.removeAttribute(a.name);
+        continue;
+      }
+      // Block javascript:/data: URLs in href/src.
+      if ((name === "href" || name === "src") && /^\s*(javascript|data):/i.test(a.value)) {
+        el.removeAttribute(a.name);
+      }
+    }
+  }
+  for (const child of Array.from(node.childNodes)) sanitizeNode(child);
+}
+
+function evaluateWhen(root: Element, ctx: Record<string, any>) {
+  for (const el of Array.from(root.querySelectorAll("[data-when]"))) {
+    const expr = el.getAttribute("data-when") || "";
+    if (!evalExpr(expr, ctx)) el.remove();
+    else el.removeAttribute("data-when");
+  }
+}
+
+function expandLoops(root: Element, grouped: Record<string, any[]>) {
+  for (const el of Array.from(root.querySelectorAll("[data-loop]"))) {
+    const groupKey = el.getAttribute("data-loop") || "data";
+    const items = grouped[groupKey] ?? [];
+    const parent = el.parentNode;
+    if (!parent) continue;
+    el.removeAttribute("data-loop");
+    const tpl = el.outerHTML;
+    const frag = document.createDocumentFragment();
+    for (const item of items) {
+      const div = document.createElement("div");
+      div.innerHTML = tpl;
+      const child = div.firstElementChild;
+      if (!child) continue;
+      // Tag the rendered element with item id + file so action wiring
+      // can find them later.
+      if (item.__id != null) child.setAttribute("data-id", String(item.__id));
+      if (item.__file) child.setAttribute("data-file", String(item.__file));
+      interpolateTree(child, item);
+      // Apply the simple data-bind for `checked` based on the current item.
+      for (const bound of Array.from(child.querySelectorAll("[data-bind]"))) {
+        const spec = bound.getAttribute("data-bind") || "";
+        const m = spec.match(/^(\w+)=(.+)$/);
+        if (m) {
+          const [, prop, expr] = m;
+          if (evalExpr(expr, item)) (bound as any).setAttribute(prop, "");
+          else bound.removeAttribute(prop);
+        }
+      }
+      // For checkbox state inside a loop, use status==completed by
+      // convention if the input has data-action="patch:status=completed".
+      for (const cb of Array.from(child.querySelectorAll(
+        'input[type="checkbox"][data-action^="patch:status="]'
+      ))) {
+        const action = cb.getAttribute("data-action") || "";
+        const targetStatus = action.split("=")[1] || "";
+        if (item.status === targetStatus) (cb as HTMLInputElement).checked = true;
+      }
+      frag.appendChild(child);
+    }
+    parent.replaceChild(frag, el);
+  }
+}
+
+function interpolateTree(root: Element, ctx: any) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const textNodes: Text[] = [];
+  let n: Node | null;
+  while ((n = walker.nextNode())) textNodes.push(n as Text);
+  for (const t of textNodes) {
+    if (t.nodeValue && t.nodeValue.includes("{{")) {
+      t.nodeValue = t.nodeValue.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, k) => {
+        const v = lookup(ctx, k);
+        return v == null ? "" : String(v);
+      });
+    }
+  }
+  // attribute interpolation
+  const all = root.querySelectorAll("*");
+  for (const el of Array.from(all)) {
+    for (const a of Array.from(el.attributes)) {
+      if (a.value.includes("{{")) {
+        const v = a.value.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, k) => {
+          const x = lookup(ctx, k);
+          return x == null ? "" : String(x);
+        });
+        el.setAttribute(a.name, v);
+      }
+    }
+  }
+}
+
+function lookup(ctx: any, key: string): any {
+  return key.split(".").reduce((acc, k) => (acc == null ? acc : acc[k]), ctx);
+}
+
+// evalExpr supports "<field>", "<field>==<value>", "<field>!=<value>",
+// "<field>.length > N". No general JS — this is a deliberately small
+// surface to keep templates safe and predictable.
+function evalExpr(expr: string, ctx: any): boolean {
+  expr = expr.trim();
+  let m = expr.match(/^([\w.]+)\s*(==|!=)\s*(.+)$/);
+  if (m) {
+    const [, k, op, raw] = m;
+    const v = lookup(ctx, k);
+    const cmp = raw.replace(/^["']|["']$/g, "");
+    return op === "==" ? String(v) === cmp : String(v) !== cmp;
+  }
+  m = expr.match(/^([\w.]+)\s*([<>]=?)\s*(\d+)$/);
+  if (m) {
+    const [, k, op, raw] = m;
+    const v = Number(lookup(ctx, k) ?? 0);
+    const n = Number(raw);
+    return op === "<" ? v < n : op === ">" ? v > n : op === "<=" ? v <= n : v >= n;
+  }
+  return !!lookup(ctx, expr);
+}
+
+function wirePluginEvents(
+  root: HTMLElement,
+  agent: Agent,
+  item: PluginMenuItem,
+  refresh: () => void
+): () => void {
+  const onClick = (e: Event) => {
+    const target = e.target as HTMLElement;
+    const a = target.closest("[data-action]") as HTMLElement | null;
+    if (!a) return;
+    const action = a.getAttribute("data-action") || "";
+    if (action === "delete") {
+      e.preventDefault();
+      const row = a.closest("[data-id]");
+      const id = row?.getAttribute("data-id");
+      if (!id) return;
+      fetch(
+        `/api/agents/${agent.id}/data/${encodeURIComponent(
+          item.plugin
+        )}/${encodeURIComponent(item.id)}/${encodeURIComponent(id)}`,
+        { method: "DELETE" }
+      ).then(refresh);
+      return;
+    }
+    if (action.startsWith("patch:")) {
+      e.preventDefault();
+      const spec = action.slice(6);
+      const m = spec.match(/^([\w.]+)=(.+)$/);
+      if (!m) return;
+      const [, field, value] = m;
+      const row = a.closest("[data-id]");
+      const id = row?.getAttribute("data-id");
+      if (!id) return;
+      fetch(
+        `/api/agents/${agent.id}/data/${encodeURIComponent(
+          item.plugin
+        )}/${encodeURIComponent(item.id)}/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: coerce(value) }),
+        }
+      ).then(refresh);
+      return;
+    }
+    if (action.startsWith("open:")) {
+      e.preventDefault();
+      const url = action.slice(5);
+      fetch(`/__open?url=${encodeURIComponent(url)}`).catch(() => {});
+      return;
+    }
+  };
+  // Catch external <a> too — auto-route to /__open.
+  const onAnchor = (e: Event) => {
+    const a = (e.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
+    if (!a) return;
+    const href = a.getAttribute("href") || "";
+    if (/^https?:|^mailto:/i.test(href)) {
+      e.preventDefault();
+      fetch(`/__open?url=${encodeURIComponent(href)}`).catch(() => {});
+    }
+  };
+  root.addEventListener("click", onClick);
+  root.addEventListener("click", onAnchor);
+  return () => {
+    root.removeEventListener("click", onClick);
+    root.removeEventListener("click", onAnchor);
+  };
+}
+
+function coerce(s: string): any {
+  if (s === "true") return true;
+  if (s === "false") return false;
+  if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+  return s;
 }
 
 type Annotation = {
@@ -4871,7 +5480,7 @@ function SchedulesPanel({
       )}
     >
       {open && (
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col w-[340px] xl:w-[380px]">
           <div className="flex items-center justify-between px-6 pt-7 pb-3">
             <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
               {route.kind !== "list" ? (
