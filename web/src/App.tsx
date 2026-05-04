@@ -696,9 +696,6 @@ function NavList({
       ref={parent}
       className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-4 pt-1 pb-8 space-y-2"
     >
-      {agents === null && (
-        <p className="text-muted-foreground text-sm px-4 py-6 italic">loading…</p>
-      )}
       {agents !== null && agents.length === 0 && (
         <p className="text-muted-foreground text-sm px-4 py-6">no agents yet</p>
       )}
@@ -4883,7 +4880,7 @@ const TEMPLATE_ALLOWED_ATTRS = new Set([
   "width", "height", "viewbox", "fill", "stroke", "stroke-width",
   "d", "x", "y", "cx", "cy", "r",
   "data-loop", "data-when", "data-bind", "data-action",
-  "data-id", "data-file"
+  "data-id", "data-file", "data-form", "data-field"
 ]);
 
 function sanitizeNode(node: Node) {
@@ -5066,6 +5063,65 @@ function wirePluginEvents(
       fetch(`/__open?url=${encodeURIComponent(url)}`).catch(() => {});
       return;
     }
+    if (action === "create") {
+      e.preventDefault();
+      // Walk up to the form container that holds the [data-field]
+      // inputs. Templates wrap the form area in [data-form] so we
+      // collect from a defined boundary instead of the whole sheet.
+      const form = a.closest("[data-form]") as HTMLElement | null;
+      if (!form) return;
+      const inputs = form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+        "[data-field]"
+      );
+      const body: Record<string, unknown> = {};
+      let hasContent = false;
+      inputs.forEach((el) => {
+        const name = el.getAttribute("data-field") || "";
+        if (!name) return;
+        const v = el.value.trim();
+        if (v) {
+          body[name] = v;
+          hasContent = true;
+        }
+      });
+      if (!hasContent) return;
+      fetch(
+        `/api/agents/${agent.id}/data/${encodeURIComponent(
+          item.plugin
+        )}/${encodeURIComponent(item.id)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      )
+        .then(() => {
+          inputs.forEach((el) => {
+            el.value = "";
+          });
+          refresh();
+          // Refocus the first input so the user can keep adding tasks
+          // without clicking back into it.
+          (inputs[0] as HTMLElement | undefined)?.focus();
+        })
+        .catch(() => {});
+      return;
+    }
+  };
+  // Enter-to-submit on inputs sitting inside a [data-form] with a
+  // [data-action="create"] sibling. Without this the user'd have to
+  // click the explicit add button every time.
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Enter") return;
+    const t = e.target as HTMLElement;
+    if (!(t instanceof HTMLInputElement)) return;
+    if (!t.hasAttribute("data-field")) return;
+    const form = t.closest("[data-form]") as HTMLElement | null;
+    if (!form) return;
+    const submit = form.querySelector<HTMLElement>('[data-action="create"]');
+    if (!submit) return;
+    e.preventDefault();
+    submit.click();
   };
   // Catch external <a> too — auto-route to /__open.
   const onAnchor = (e: Event) => {
@@ -5079,9 +5135,11 @@ function wirePluginEvents(
   };
   root.addEventListener("click", onClick);
   root.addEventListener("click", onAnchor);
+  root.addEventListener("keydown", onKey as EventListener);
   return () => {
     root.removeEventListener("click", onClick);
     root.removeEventListener("click", onAnchor);
+    root.removeEventListener("keydown", onKey as EventListener);
   };
 }
 

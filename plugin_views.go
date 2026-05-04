@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Plugin Views — plugins can register top-bar menu items that open a
@@ -422,6 +425,91 @@ func patchDataItem(agentID string, src menuDataSource, itemIDStr string, patch m
 	return fmt.Errorf("unknown kind %q", src.Kind)
 }
 
+// addDataItem creates a new item in the data source. file-per-item
+// writes to <root>/<dir>/<id>.json — the dir is derived from the
+// glob's first wildcarded segment so we land somewhere the read path
+// will discover. `fields` is the user-supplied payload; we generate
+// an id and timestamp, plus default `status: "pending"` for taskish
+// payloads.
+func addDataItem(agentID string, src menuDataSource, fields map[string]any) (dataItem, error) {
+	if src.Kind != "file-per-item" {
+		// merged-list create requires picking a parent file; not used
+		// by any current plugin and easy to add later.
+		return nil, fmt.Errorf("create not supported for kind %q", src.Kind)
+	}
+	root, err := resolveRoot(src.Root, agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	id, _ := newDataItemID()
+	if v, ok := fields["id"].(string); ok && v != "" {
+		id = v
+	}
+
+	item := dataItem{}
+	for k, v := range fields {
+		if !strings.HasPrefix(k, "__") {
+			item[k] = v
+		}
+	}
+	item["id"] = id
+	if _, hasStatus := item["status"]; !hasStatus {
+		item["status"] = "pending"
+	}
+	item["createdAt"] = time.Now().UTC().Format(time.RFC3339)
+
+	dir := writeDirForGlob(root, src.Glob)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	file := filepath.Join(dir, id+".json")
+	if err := writeJSONFile(file, item); err != nil {
+		return nil, err
+	}
+	item["__file"] = file
+	item["__id"] = id
+	return item, nil
+}
+
+// writeDirForGlob returns the directory the create handler should
+// write into. We walk the glob until we hit a wildcard segment and
+// reuse anything before it as a literal subpath; the wildcard itself
+// becomes "director-ui" (a stable bucket so UI-created items stay
+// discoverable on the next read). Examples:
+//   tasks/*/*.json     → <root>/tasks/director-ui
+//   schedules/*.json   → <root>/schedules
+//   *.json             → <root>
+func writeDirForGlob(root, glob string) string {
+	parts := strings.Split(glob, "/")
+	out := root
+	for _, p := range parts {
+		if strings.ContainsAny(p, "*?[") {
+			// First wildcard: if it's not the leaf (has more after it),
+			// substitute "director-ui" so the read glob still picks
+			// these up. If it IS the leaf (e.g. `*.json`), stop here.
+			break
+		}
+		out = filepath.Join(out, p)
+	}
+	// If the glob has the form `<dir>/*/<file-pattern>`, also nest
+	// into the director-ui bucket so reads land it.
+	if strings.Count(glob, "*") >= 2 {
+		out = filepath.Join(out, "director-ui")
+	}
+	return out
+}
+
+// newDataItemID returns a short random id suitable for filename use.
+// 16 hex chars (64 bits) is plenty for a per-agent task list.
+func newDataItemID() (string, error) {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf[:]), nil
+}
+
 func deleteDataItem(agentID string, src menuDataSource, itemIDStr string) error {
 	items, err := readDataSource(agentID, src)
 	if err != nil {
@@ -576,6 +664,20 @@ func handlePluginData(w http.ResponseWriter, r *http.Request, agentID, tail stri
 			items = []dataItem{}
 		}
 		writeJSON(w, items)
+	case http.MethodPost:
+		// New-item creation. Body is the field set the user wants
+		// stored; we generate id + status + createdAt server-side.
+		var fields map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		item, err := addDataItem(agentID, mi.Data, fields)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, item)
 	case http.MethodPatch:
 		if len(parts) < 3 || parts[2] == "" {
 			http.Error(w, "item id required", http.StatusBadRequest)
