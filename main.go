@@ -684,6 +684,13 @@ func router() http.Handler {
 
 	mux.HandleFunc("/api/fleet", handleFleet)
 	mux.HandleFunc("/api/doctor", handleDoctor)
+	mux.HandleFunc("/api/messaging/status", handleMessagingStatus)
+	mux.HandleFunc("/api/messaging/telegram/connect", handleMessagingTelegramConnect)
+	mux.HandleFunc("/api/messaging/telegram/disconnect", handleMessagingTelegramDisconnect)
+	mux.HandleFunc("/api/messaging/imessage/check", handleMessagingIMessageCheck)
+	mux.HandleFunc("/api/messaging/imessage/start", handleMessagingIMessageStart)
+	mux.HandleFunc("/api/messaging/imessage/stop", handleMessagingIMessageStop)
+	mux.HandleFunc("/api/messaging/open-url", handleMessagingOpenURL)
 	mux.HandleFunc("/api/agents/", func(w http.ResponseWriter, r *http.Request) {
 		// /api/agents/<id>/messages  or  /api/agents/<id>/notify
 		rest := strings.TrimPrefix(r.URL.Path, "/api/agents/")
@@ -863,6 +870,11 @@ func main() {
 		camuxBin = v
 	}
 	_ = io.Discard // silence unused import if we pull it back for embed later
+
+	// Resume any messaging pollers that were running before last shutdown.
+	// Runs after rosterBin is resolved since the inbound path shells out
+	// to it.
+	messagingBoot()
 
 	fmt.Fprintf(os.Stderr, "fleetview on http://%s — Vite dev: cd web && npm run dev\n", *addr)
 	if err := http.ListenAndServe(*addr, router()); err != nil {

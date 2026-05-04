@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAutoAnimate } from "@formkit/auto-animate/react";
-import { Activity, AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, FileCode, FileJson, FileSpreadsheet, FileText, Folder, Globe, Image as ImageIcon, KeyRound, Layers, Loader2, Maximize2, MessageCircle, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkle, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
+import { Activity, AppWindow, ArrowLeft, ArrowUp, ArrowUpRight, BookOpen, CalendarClock, Check, ChevronRight, Clock, CornerDownRight, ExternalLink, Eye, EyeOff, FileCode, FileJson, FileSpreadsheet, FileText, Folder, Globe, Image as ImageIcon, KeyRound, Layers, Loader2, Maximize2, MessageCircle, MessageSquare, Minimize2, MousePointerClick, Navigation, Package, Paperclip, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Pencil, Plus, Send, Sparkle, Square, SquareCheckBig, SquareX, Store, TerminalSquare, Trash2, TriangleAlert, Users, Workflow, X as XIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -103,6 +103,25 @@ function useLibraryPanel() {
   };
 }
 
+const MESSAGING_PANEL_STORAGE_KEY = "fleetview.messagingPanel.open";
+
+function useMessagingPanel() {
+  const [open, setOpen] = useState(() => {
+    const v = localStorage.getItem(MESSAGING_PANEL_STORAGE_KEY);
+    return v === "true";
+  });
+  const set = useCallback((next: boolean) => {
+    setOpen(next);
+    localStorage.setItem(MESSAGING_PANEL_STORAGE_KEY, String(next));
+  }, []);
+  return {
+    open,
+    set,
+    toggle: useCallback(() => set(!open), [open, set]),
+    close: useCallback(() => set(false), [set]),
+  };
+}
+
 export function App() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   // User's explicit pick. When null, we fall back to the dispatcher so
@@ -121,6 +140,7 @@ export function App() {
   const artifactPanel = useArtifactPanel();
   const schedulesPanel = useSchedulesPanel();
   const libraryPanel = useLibraryPanel();
+  const messagingPanel = useMessagingPanel();
   const sidebar = useFleetSidebar();
   // Plugin menu state lives here so the sheets render at App level
   // (siblings of other panels), not inside TopNav's flex row. Declared
@@ -166,10 +186,21 @@ export function App() {
       panel.close();
       artifactPanel.close();
       schedulesPanel.close();
+      messagingPanel.close();
       pluginMenu.setOpenId(null);
     }
     libraryPanel.toggle();
-  }, [panel, artifactPanel, schedulesPanel, libraryPanel, pluginMenu]);
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel, messagingPanel, pluginMenu]);
+  const toggleMessaging = useCallback(() => {
+    if (!messagingPanel.open) {
+      panel.close();
+      artifactPanel.close();
+      schedulesPanel.close();
+      libraryPanel.close();
+      pluginMenu.setOpenId(null);
+    }
+    messagingPanel.toggle();
+  }, [panel, artifactPanel, schedulesPanel, libraryPanel, messagingPanel, pluginMenu]);
   // Map of agent id → timestamp of a just-sent message. Used to show the
   // thinking shimmer immediately, before backend polling catches up to the
   // agent entering "streaming" state. Cleared by the effect below.
@@ -346,6 +377,8 @@ export function App() {
           onToggleSchedulesPanel={toggleSchedules}
           libraryPanelOpen={libraryPanel.open}
           onToggleLibraryPanel={toggleLibrary}
+          messagingPanelOpen={messagingPanel.open}
+          onToggleMessagingPanel={toggleMessaging}
           pluginMenuItems={pluginMenu.items}
           pluginMenuOpenId={pluginMenu.openId}
           onTogglePluginMenu={togglePluginItem}
@@ -372,6 +405,11 @@ export function App() {
         agent={selected}
         open={libraryPanel.open}
         onClose={libraryPanel.close}
+      />
+      <MessagingPanel
+        agent={selected}
+        open={messagingPanel.open}
+        onClose={messagingPanel.close}
       />
       {selected && pluginMenu.items.map((mi) => (
         <PluginViewSheet
@@ -922,6 +960,8 @@ function Detail({
   onToggleSchedulesPanel,
   libraryPanelOpen,
   onToggleLibraryPanel,
+  messagingPanelOpen,
+  onToggleMessagingPanel,
   pluginMenuItems,
   pluginMenuOpenId,
   onTogglePluginMenu,
@@ -941,6 +981,8 @@ function Detail({
   onToggleSchedulesPanel: () => void;
   libraryPanelOpen: boolean;
   onToggleLibraryPanel: () => void;
+  messagingPanelOpen: boolean;
+  onToggleMessagingPanel: () => void;
   pluginMenuItems: PluginMenuItem[];
   pluginMenuOpenId: string | null;
   onTogglePluginMenu: (id: string) => void;
@@ -960,6 +1002,8 @@ function Detail({
           onToggleSchedulesPanel={onToggleSchedulesPanel}
           libraryPanelOpen={libraryPanelOpen}
           onToggleLibraryPanel={onToggleLibraryPanel}
+          messagingPanelOpen={messagingPanelOpen}
+          onToggleMessagingPanel={onToggleMessagingPanel}
           pluginMenuItems={pluginMenuItems}
           pluginMenuOpenId={pluginMenuOpenId}
           onTogglePluginMenu={onTogglePluginMenu}
@@ -984,6 +1028,8 @@ function Detail({
         onToggleSchedulesPanel={onToggleSchedulesPanel}
         libraryPanelOpen={libraryPanelOpen}
         onToggleLibraryPanel={onToggleLibraryPanel}
+        messagingPanelOpen={messagingPanelOpen}
+        onToggleMessagingPanel={onToggleMessagingPanel}
         pluginMenuItems={pluginMenuItems}
         pluginMenuOpenId={pluginMenuOpenId}
         onTogglePluginMenu={onTogglePluginMenu}
@@ -1029,6 +1075,8 @@ function TopNav({
   onToggleSchedulesPanel,
   libraryPanelOpen,
   onToggleLibraryPanel,
+  messagingPanelOpen,
+  onToggleMessagingPanel,
   pluginMenuItems,
   pluginMenuOpenId,
   onTogglePluginMenu,
@@ -1044,6 +1092,8 @@ function TopNav({
   onToggleSchedulesPanel: () => void;
   libraryPanelOpen: boolean;
   onToggleLibraryPanel: () => void;
+  messagingPanelOpen: boolean;
+  onToggleMessagingPanel: () => void;
   pluginMenuItems: PluginMenuItem[];
   pluginMenuOpenId: string | null;
   onTogglePluginMenu: (id: string) => void;
@@ -1068,6 +1118,9 @@ function TopNav({
         )}
         {agent?.kind === "orchestrator" && (
           <LibraryNavButton agent={agent} open={libraryPanelOpen} onToggle={onToggleLibraryPanel} />
+        )}
+        {agent?.kind === "dispatcher" && (
+          <MessagingNavButton open={messagingPanelOpen} onToggle={onToggleMessagingPanel} />
         )}
         {agent && (
           <PluginMenuButtons
@@ -6194,4 +6247,418 @@ function formatHourLabel(h: number): string {
   if (h < 12) return `${h} AM`;
   if (h === 12) return "12 PM";
   return `${h - 12} PM`;
+}
+
+// ─── messaging ────────────────────────────────────────────────────
+
+function MessagingNavButton({
+  open,
+  onToggle,
+}: {
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={open ? "Hide messaging panel" : "Show messaging panel"}
+      className={cn(
+        "flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] uppercase hover:text-foreground transition-colors",
+        open ? "text-foreground" : "text-muted-foreground"
+      )}
+    >
+      <span className="hidden @lg:inline">Messaging</span>
+      <MessageSquare className="w-3.5 h-3.5" strokeWidth={1.8} />
+    </button>
+  );
+}
+
+type MessagingStatus = {
+  telegram: {
+    connected: boolean;
+    bot_username?: string;
+    chat_id?: number;
+  };
+  imessage: {
+    watching: boolean;
+    last_rowid?: number;
+  };
+  active_source?: string;
+};
+
+type IMessagePrereqs = {
+  full_disk_access: boolean;
+  messages_app_ready: boolean;
+};
+
+function MessagingPanel({
+  agent,
+  open,
+  onClose,
+}: {
+  agent: Agent | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const eligible = agent?.kind === "dispatcher";
+  const [status, setStatus] = useState<MessagingStatus | null>(null);
+  const [prereqs, setPrereqs] = useState<IMessagePrereqs | null>(null);
+
+  const refresh = useCallback(() => {
+    fetch("/api/messaging/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setStatus(d))
+      .catch(() => setStatus(null));
+  }, []);
+
+  const refreshPrereqs = useCallback(() => {
+    fetch("/api/messaging/imessage/check")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setPrereqs(d))
+      .catch(() => setPrereqs(null));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    refresh();
+    refreshPrereqs();
+    const id = setInterval(() => {
+      refresh();
+      refreshPrereqs();
+    }, 4000);
+    return () => clearInterval(id);
+  }, [open, refresh, refreshPrereqs]);
+
+  return (
+    <aside
+      className={cn(
+        "shrink-0 border-l border-border/60 bg-sidebar h-full overflow-hidden transition-[width] duration-200 ease-in-out",
+        open ? "w-[340px] xl:w-[380px]" : "w-0 border-l-0"
+      )}
+    >
+      {open && (
+        <div className="h-full flex flex-col w-[340px] xl:w-[380px]">
+          <div className="flex items-center justify-between px-6 pt-7 pb-3">
+            <div className="flex items-center gap-2 text-[11px] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+              <MessageSquare className="w-3.5 h-3.5" strokeWidth={1.8} />
+              <span>Messaging</span>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Close messaging panel"
+            >
+              <PanelRightClose className="w-3.5 h-3.5" strokeWidth={1.8} />
+            </button>
+          </div>
+
+          {!eligible && (
+            <p className="text-sm italic text-muted-foreground px-6 py-6">
+              Messaging connects external chat sources to the dispatcher. Open
+              this panel from the Director (dispatcher) view.
+            </p>
+          )}
+
+          {eligible && (
+            <div className="flex-1 overflow-y-auto plugin-sheet-body px-6 pb-8 space-y-5">
+              <TelegramCard status={status} onChange={refresh} />
+              <IMessageCard
+                status={status}
+                prereqs={prereqs}
+                onChange={() => {
+                  refresh();
+                  refreshPrereqs();
+                }}
+              />
+              {status?.active_source && (
+                <p className="text-[11px] tracking-[0.18em] uppercase text-muted-foreground/80 pt-2">
+                  Replies route to {status.active_source}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function TelegramCard({
+  status,
+  onChange,
+}: {
+  status: MessagingStatus | null;
+  onChange: () => void;
+}) {
+  const tg = status?.telegram;
+  const connected = !!tg?.connected;
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const connect = useCallback(async () => {
+    if (!token.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/messaging/telegram/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bot_token: token.trim() }),
+      });
+      if (!r.ok) {
+        const t = await r.text();
+        throw new Error(t || `HTTP ${r.status}`);
+      }
+      setToken("");
+      onChange();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [token, onChange]);
+
+  const disconnect = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await fetch("/api/messaging/telegram/disconnect", { method: "POST" });
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  }, [onChange]);
+
+  return (
+    <section className="rounded-2xl border border-border/60 bg-card/60 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Send className="w-4 h-4" strokeWidth={1.8} />
+          <h3 className="text-sm font-medium">Telegram</h3>
+        </div>
+        <span
+          className={cn(
+            "text-[10px] tracking-[0.18em] uppercase px-2 py-0.5 rounded-full",
+            connected ? "bg-emerald-500/15 text-emerald-700" : "bg-muted text-muted-foreground"
+          )}
+        >
+          {connected ? "connected" : "off"}
+        </span>
+      </div>
+
+      {connected ? (
+        <>
+          <p className="text-xs text-muted-foreground">
+            Bot: <span className="font-medium text-foreground">@{tg?.bot_username}</span>
+            {tg?.chat_id ? ` · chat ${tg.chat_id}` : " · waiting for first message"}
+          </p>
+          <button
+            type="button"
+            onClick={disconnect}
+            disabled={busy}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+          >
+            Disconnect
+          </button>
+        </>
+      ) : (
+        <>
+          <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
+            <li>
+              Install Telegram on your phone or Mac if you haven't —{" "}
+              <ExternalLinkButton url="https://telegram.org/">
+                telegram.org
+              </ExternalLinkButton>
+              .
+            </li>
+            <li>
+              In Telegram, search for{" "}
+              <span className="font-medium text-foreground">@BotFather</span>,
+              start a chat, and run <code className="font-mono text-[11px]">/newbot</code>.
+            </li>
+            <li>Copy the HTTP API token BotFather sends back.</li>
+            <li>
+              Paste it below and connect. Then message your new bot — the
+              first chat to message it becomes the authorized source.
+            </li>
+          </ol>
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="123456:ABC-DEF..."
+            className="w-full text-xs px-3 py-2 rounded-md border border-border/60 bg-background font-mono"
+          />
+          <button
+            type="button"
+            onClick={connect}
+            disabled={busy || !token.trim()}
+            className="w-full text-xs px-3 py-2 rounded-md bg-foreground text-background hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            {busy ? "Connecting..." : "Connect"}
+          </button>
+          {err && <p className="text-[11px] text-red-600">{err}</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
+function IMessageCard({
+  status,
+  prereqs,
+  onChange,
+}: {
+  status: MessagingStatus | null;
+  prereqs: IMessagePrereqs | null;
+  onChange: () => void;
+}) {
+  const watching = !!status?.imessage.watching;
+  const fda = !!prereqs?.full_disk_access;
+  const ready = !!prereqs?.messages_app_ready;
+  const canStart = fda && ready;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const start = useCallback(async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/messaging/imessage/start", { method: "POST" });
+      if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+      onChange();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [onChange]);
+
+  const stop = useCallback(async () => {
+    setBusy(true);
+    try {
+      await fetch("/api/messaging/imessage/stop", { method: "POST" });
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  }, [onChange]);
+
+  return (
+    <section className="rounded-2xl border border-border/60 bg-card/60 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MessageCircle className="w-4 h-4" strokeWidth={1.8} />
+          <h3 className="text-sm font-medium">iMessage</h3>
+        </div>
+        <span
+          className={cn(
+            "text-[10px] tracking-[0.18em] uppercase px-2 py-0.5 rounded-full",
+            watching ? "bg-emerald-500/15 text-emerald-700" : "bg-muted text-muted-foreground"
+          )}
+        >
+          {watching ? "watching" : "off"}
+        </span>
+      </div>
+
+      {watching ? (
+        <button
+          type="button"
+          onClick={stop}
+          disabled={busy}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+        >
+          Stop watching
+        </button>
+      ) : (
+        <>
+          <ul className="text-xs space-y-2">
+            <PrereqRow label="Full Disk Access for Director" ok={fda}>
+              <ExternalLinkButton url="x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles">
+                Grant access
+              </ExternalLinkButton>
+            </PrereqRow>
+            <PrereqRow label="Messages.app signed in" ok={ready}>
+              <ExternalLinkButton url="https://support.apple.com/guide/messages/icl21887/mac">
+                How to sign in
+              </ExternalLinkButton>
+            </PrereqRow>
+          </ul>
+          {!fda && (
+            <p className="text-[11px] text-muted-foreground italic">
+              After granting Full Disk Access, quit and relaunch Director so the new permission takes effect.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={start}
+            disabled={busy || !canStart}
+            className="w-full text-xs px-3 py-2 rounded-md bg-foreground text-background hover:opacity-90 disabled:opacity-50 transition-opacity"
+            title={canStart ? "" : "All prerequisites must be green"}
+          >
+            {busy ? "Starting..." : "Start watching"}
+          </button>
+          {err && <p className="text-[11px] text-red-600">{err}</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
+// ExternalLinkButton routes URL opens through the backend so macOS
+// URL schemes (x-apple.systempreferences:…) and external sites both
+// land in the user's default app instead of getting eaten by the
+// Wails webview.
+function ExternalLinkButton({
+  url,
+  children,
+}: {
+  url: string;
+  children: React.ReactNode;
+}) {
+  const open = useCallback(() => {
+    fetch("/api/messaging/open-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    }).catch(() => {});
+  }, [url]);
+  return (
+    <button
+      type="button"
+      onClick={open}
+      className="underline underline-offset-2 hover:text-foreground transition-colors"
+    >
+      {children}
+    </button>
+  );
+}
+
+function PrereqRow({
+  label,
+  ok,
+  children,
+}: {
+  label: string;
+  ok: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <li className="flex items-center justify-between gap-3">
+      <span className="flex items-center gap-2 min-w-0">
+        {ok ? (
+          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" strokeWidth={2} />
+        ) : (
+          <Square className="w-3.5 h-3.5 text-muted-foreground shrink-0" strokeWidth={1.8} />
+        )}
+        <span className={cn("text-xs", ok ? "text-foreground" : "text-muted-foreground")}>
+          {label}
+        </span>
+      </span>
+      {!ok && children && <span className="text-[11px] shrink-0">{children}</span>}
+    </li>
+  );
 }
