@@ -2253,6 +2253,10 @@ function NotifyBox({
               }}
               disabled={sending}
               rows={3}
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              autoComplete="off"
             />
             <button
               type="button"
@@ -2958,6 +2962,10 @@ function MarketplaceAddView({
           placeholder="anthropics/claude-code-marketplace"
           className="w-full h-9 px-3 rounded-md bg-background ring-1 ring-border/70 focus:ring-border outline-none text-[13px] font-mono caret-muted-foreground"
           disabled={busy}
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          autoComplete="off"
         />
         <button
           type="submit"
@@ -3766,6 +3774,10 @@ function CredentialField({
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
             placeholder={placeholder}
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            autoComplete="off"
             className="flex-1 min-w-0 bg-transparent outline-none text-[12px] text-foreground placeholder:text-muted-foreground/60 font-mono"
           />
           {value && (
@@ -4714,6 +4726,11 @@ function PluginViewSheet({
   const [tplHtml, setTplHtml] = useState<string | null>(null);
   const [data, setData] = useState<any[] | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Cache of the last raw data response. We skip setData when the
+  // next poll comes back byte-identical, otherwise the 3s poll
+  // re-renders innerHTML and blows away whatever the user is typing
+  // in a [data-form] input (focus + value both lost).
+  const lastDataJSONRef = useRef<string>("");
 
   // Fetch template once when first opened. Templates rarely change
   // mid-session — re-fetch only when the panel is opened again from
@@ -4741,15 +4758,31 @@ function PluginViewSheet({
   useEffect(() => {
     if (!open) return;
     let stop = false;
+    // Force the first tick to set state so the panel hydrates after
+    // an open (or an agent / menu-id swap) — otherwise a leftover
+    // cache from a prior mount could short-circuit the initial render.
+    lastDataJSONRef.current = "";
     const tick = () => {
       fetch(
         `/api/agents/${agent.id}/data/${encodeURIComponent(
           item.plugin
         )}/${encodeURIComponent(item.id)}`
       )
-        .then((r) => (r.ok ? r.json() : []))
-        .then((d) => {
-          if (!stop) setData(Array.isArray(d) ? d : []);
+        .then((r) => (r.ok ? r.text() : "[]"))
+        .then((raw) => {
+          if (stop) return;
+          // Byte-compare: if the payload hasn't changed since the
+          // last poll, skip setState entirely so the render effect
+          // doesn't re-run and rewrite innerHTML (which would steal
+          // focus from any [data-form] input the user is typing in).
+          if (raw === lastDataJSONRef.current) return;
+          lastDataJSONRef.current = raw;
+          try {
+            const d = JSON.parse(raw);
+            setData(Array.isArray(d) ? d : []);
+          } catch {
+            setData([]);
+          }
         })
         .catch(() => {});
     };
@@ -4775,8 +4808,19 @@ function PluginViewSheet({
           item.plugin
         )}/${encodeURIComponent(item.id)}`
       )
-        .then((r) => (r.ok ? r.json() : []))
-        .then((d) => setData(Array.isArray(d) ? d : []))
+        .then((r) => (r.ok ? r.text() : "[]"))
+        .then((raw) => {
+          // After a user-initiated mutation we always want to render
+          // — bypass the byte-compare cache by clearing it so the
+          // next poll also doesn't short-circuit on stale data.
+          lastDataJSONRef.current = raw;
+          try {
+            const d = JSON.parse(raw);
+            setData(Array.isArray(d) ? d : []);
+          } catch {
+            setData([]);
+          }
+        })
         .catch(() => {});
     });
     return off;
@@ -4880,7 +4924,11 @@ const TEMPLATE_ALLOWED_ATTRS = new Set([
   "width", "height", "viewbox", "fill", "stroke", "stroke-width",
   "d", "x", "y", "cx", "cy", "r",
   "data-loop", "data-when", "data-bind", "data-action",
-  "data-id", "data-file", "data-form", "data-field"
+  "data-id", "data-file", "data-form", "data-field",
+  // Keyboard / IME hints — let templates disable macOS autocorrect /
+  // autocap / spellcheck when the input is for short identifiers or
+  // task subjects rather than prose.
+  "autocorrect", "autocapitalize", "spellcheck", "autocomplete"
 ]);
 
 function sanitizeNode(node: Node) {
@@ -6032,6 +6080,10 @@ function ScheduleFormView({
             value={draftPrompt}
             onChange={(e) => setDraftPrompt(e.target.value)}
             rows={4}
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            autoComplete="off"
           />
         </div>
 
@@ -6549,6 +6601,10 @@ function TelegramCard({
             onChange={(e) => setToken(e.target.value)}
             placeholder="123456:ABC-DEF..."
             className="w-full text-xs px-3 py-2 rounded-md border border-border/60 bg-background font-mono"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            autoComplete="off"
           />
           <button
             type="button"
