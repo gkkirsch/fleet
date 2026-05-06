@@ -216,6 +216,27 @@ export function App() {
       return n;
     });
   }, []);
+  // Optimistic user-message ledger. NotifyBox.send populates this the
+  // moment the user hits send so the message appears in the stream
+  // before the backend round-trip + JSONL flush + next poll.
+  // Reconciled in the messages effect below: when a polled user turn
+  // matches the optimistic text, the optimistic entry is dropped.
+  // Each entry expires after 90s as a safety net so a permanently
+  // failed delivery doesn't strand a phantom message.
+  const [optimisticSends, setOptimisticSends] = useState<
+    Record<string, { text: string; sentAt: number }>
+  >({});
+  const pushOptimistic = useCallback((id: string, text: string) => {
+    setOptimisticSends((p) => ({ ...p, [id]: { text, sentAt: Date.now() } }));
+  }, []);
+  const dropOptimistic = useCallback((id: string) => {
+    setOptimisticSends((p) => {
+      if (!(id in p)) return p;
+      const n = { ...p };
+      delete n[id];
+      return n;
+    });
+  }, []);
 
   useEffect(() => {
     let stop = false;
@@ -260,8 +281,25 @@ export function App() {
       if (text === lastMessagesJSONRef.current) return;
       lastMessagesJSONRef.current = text;
       try {
-        const next = JSON.parse(text) as Message[] | null;
-        setMessages(next ?? []);
+        const next = (JSON.parse(text) as Message[] | null) ?? [];
+        setMessages(next);
+        // Reconcile optimistic: if the latest poll contains a user
+        // turn whose text matches what we optimistically pushed, the
+        // real message is now in the stream and the placeholder
+        // should disappear. We compare on trimmed text — claude's
+        // TUI doesn't always preserve trailing whitespace.
+        setOptimisticSends((p) => {
+          const entry = p[selectedId];
+          if (!entry) return p;
+          const target = entry.text.trim();
+          const match = next.some(
+            (m) => m.role === "user" && (m.text ?? "").trim() === target
+          );
+          if (!match) return p;
+          const n = { ...p };
+          delete n[selectedId];
+          return n;
+        });
       } catch {
         /* malformed payload, ignore */
       }
@@ -273,6 +311,57 @@ export function App() {
       clearInterval(h);
     };
   }, [selectedId]);
+
+  // Safety: expire optimistic sends after 90s so a permanently failed
+  // delivery (network drop, recipient died) doesn't leave a phantom
+  // message hanging in the stream. The actual NotifyBox onError path
+  // also clears it, but this is the floor.
+  useEffect(() => {
+    if (Object.keys(optimisticSends).length === 0) return;
+    const h = setInterval(() => {
+      const now = Date.now();
+      setOptimisticSends((p) => {
+        let changed = false;
+        const n: typeof p = {};
+        for (const [id, e] of Object.entries(p)) {
+          if (now - e.sentAt < 90_000) {
+            n[id] = e;
+          } else {
+            changed = true;
+          }
+        }
+        return changed ? n : p;
+      });
+    }, 5_000);
+    return () => clearInterval(h);
+  }, [optimisticSends]);
+
+  // Build the displayed message list: server messages plus an
+  // optimistic user turn if the user just sent something the poll
+  // hasn't picked up yet. Memoized so the reference is stable when
+  // neither input changed.
+  const displayedMessages = useMemo(() => {
+    if (!selectedId) return messages;
+    const entry = optimisticSends[selectedId];
+    if (!entry) return messages;
+    // If the server stream already shows a matching user turn, no
+    // need to append. (Reconciler runs on poll, but a render pass
+    // can occur between poll and setOptimisticSends; this guards
+    // against a brief duplicate.)
+    const target = entry.text.trim();
+    const alreadyPresent = messages.some(
+      (m) => m.role === "user" && (m.text ?? "").trim() === target
+    );
+    if (alreadyPresent) return messages;
+    return [
+      ...messages,
+      {
+        role: "user",
+        text: entry.text,
+        time: new Date(entry.sentAt).toISOString(),
+      } as Message,
+    ];
+  }, [messages, optimisticSends, selectedId]);
 
   const selected = agents?.find((a) => a.id === selectedId) ?? null;
   // Plugin menu items + open state. Lifted to App so the sheets
@@ -365,9 +454,11 @@ export function App() {
       <div className="flex-1 min-w-0">
         <Detail
           agent={selected}
-          messages={messages}
+          messages={displayedMessages}
           isPending={isPending}
           onSent={markPending}
+          onOptimisticSend={pushOptimistic}
+          onSendFailed={dropOptimistic}
           onInterrupted={clearPending}
           panelOpen={skillsPanelOpen}
           onTogglePanel={toggleSettings}
@@ -948,6 +1039,8 @@ function Detail({
   messages,
   isPending,
   onSent,
+  onOptimisticSend,
+  onSendFailed,
   onInterrupted,
   panelOpen,
   onTogglePanel,
@@ -969,6 +1062,8 @@ function Detail({
   messages: Message[];
   isPending: boolean;
   onSent: (id: string) => void;
+  onOptimisticSend: (id: string, text: string) => void;
+  onSendFailed: (id: string) => void;
   onInterrupted: (id: string) => void;
   panelOpen: boolean;
   onTogglePanel: () => void;
@@ -1037,6 +1132,8 @@ function Detail({
       <NotifyBox
         agentId={agent.id}
         onSent={onSent}
+        onOptimisticSend={onOptimisticSend}
+        onSendFailed={onSendFailed}
         onInterrupted={onInterrupted}
         agentBusy={agent.status === "streaming" || isPending}
         suggestions={
@@ -2032,12 +2129,16 @@ type Attachment = {
 function NotifyBox({
   agentId,
   onSent,
+  onOptimisticSend,
+  onSendFailed,
   onInterrupted,
   agentBusy,
   suggestions = [],
 }: {
   agentId: string;
   onSent: (id: string) => void;
+  onOptimisticSend: (id: string, text: string) => void;
+  onSendFailed: (id: string) => void;
   onInterrupted: (id: string) => void;
   agentBusy: boolean;
   suggestions?: string[];
@@ -2140,6 +2241,10 @@ function NotifyBox({
     setSendError(null);
     setSending(true);
     onSent(agentId);
+    // Optimistically render the user message in the stream right now.
+    // The poll loop reconciles when the real turn lands in the JSONL;
+    // failure paths below clear it via onSendFailed.
+    onOptimisticSend(agentId, message);
     try {
       const r = await fetch(`/api/agents/${agentId}/notify`, {
         method: "POST",
@@ -2150,14 +2255,16 @@ function NotifyBox({
         const detail = await r.text().catch(() => "");
         setText(draftText);
         setSendError(detail.trim() || `send failed (${r.status})`);
+        onSendFailed(agentId);
       }
     } catch (e: any) {
       setText(draftText);
       setSendError(String(e?.message || e));
+      onSendFailed(agentId);
     } finally {
       setSending(false);
     }
-  }, [agentId, text, attachments, onSent]);
+  }, [agentId, text, attachments, onSent, onOptimisticSend, onSendFailed]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
