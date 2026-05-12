@@ -1559,7 +1559,14 @@ function MessageStream({
 
   return (
     <div className="scrollbar-calm flex-1 min-h-0 overflow-y-auto px-10 pt-20 pb-6">
-      <div className="max-w-3xl mx-auto">
+      {/*
+        Content uses min-h-full + flex-col so a short conversation hugs
+        the bottom near the input (mt-auto on the messages block) instead
+        of stranding the messages at the top with a tall empty gap below.
+        When messages overflow, mt-auto collapses to 0 and natural scroll
+        takes over — header at top, messages at bottom, scroll-pin works.
+      */}
+      <div className="max-w-3xl mx-auto min-h-full flex flex-col">
         <div className="mb-3">
           <KindGlyph kind={agent.kind} size={54} />
         </div>
@@ -1576,11 +1583,11 @@ function MessageStream({
         )}
 
         {filtered.length === 0 && !isStreaming ? (
-          <div className="text-muted-foreground text-sm italic py-8">
+          <div className="text-muted-foreground text-sm italic py-8 mt-auto">
             no messages yet — send one below
           </div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-4 mt-auto">
             {hidden > 0 && (
               <div className="flex justify-center pt-2 pb-4">
                 <button

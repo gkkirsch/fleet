@@ -16,9 +16,18 @@ import (
 )
 
 // Per-orch scheduled tasks. Claude Code reads these natively from
-// <CLAUDE_CONFIG_DIR>/scheduled_tasks.json and fires the prompts when
-// their cron matches; fleetview here only does CRUD on that file so
-// the user can add / list / remove durable jobs through the dashboard.
+// <project-root>/.claude/scheduled_tasks.json (project root = the cwd
+// claude was launched with, which for our orchs is their space dir)
+// and fires the prompts when their cron matches. director-server here
+// only does CRUD on that file so the user can add / list / remove
+// durable jobs through the dashboard.
+//
+// IMPORTANT — path is keyed off the orch's *space* (its cwd, which
+// claude treats as projectRoot), NOT its CLAUDE_CONFIG_DIR. Previous
+// versions wrote to <CLAUDE_CONFIG_DIR>/scheduled_tasks.json, which
+// the scheduler never reads — schedules existed on disk but never
+// fired. schedulesPathFor below auto-migrates from the legacy path on
+// first read so user data isn't lost.
 //
 // Shape on disk matches Claude Code's expected schema (also matches
 // superbot3's broker so we don't reinvent):
@@ -50,12 +59,52 @@ type scheduleListReply struct {
 	Tasks []Schedule `json:"tasks"`
 }
 
+// schedulesPathFor returns <orch_space>/.claude/scheduled_tasks.json —
+// the canonical location Claude Code's cronScheduler reads. Auto-
+// migrates from the legacy <CLAUDE_CONFIG_DIR>/scheduled_tasks.json
+// location on first probe so user data isn't lost when upgrading.
 func schedulesPathFor(orchID string) string {
+	space, err := orchSpaceDir(orchID)
+	if err != nil || space == "" {
+		return ""
+	}
+	canonical := filepath.Join(space, ".claude", "scheduled_tasks.json")
+	if _, err := os.Stat(canonical); os.IsNotExist(err) {
+		legacy := legacySchedulesPathFor(orchID)
+		if legacy != "" {
+			if _, lerr := os.Stat(legacy); lerr == nil {
+				if mErr := migrateLegacySchedulesFile(legacy, canonical); mErr != nil {
+					fmt.Fprintf(os.Stderr, "schedules: legacy %s → %s migrate failed: %v\n", legacy, canonical, mErr)
+				}
+			}
+		}
+	}
+	return canonical
+}
+
+// legacySchedulesPathFor returns the pre-fix location. Used only for
+// one-shot auto-migration.
+func legacySchedulesPathFor(orchID string) string {
 	d := orchClaudeDirOnDisk(orchID)
 	if d == "" {
 		return ""
 	}
 	return filepath.Join(d, "scheduled_tasks.json")
+}
+
+func migrateLegacySchedulesFile(from, to string) error {
+	b, err := os.ReadFile(from)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(to, b, 0o644); err != nil {
+		return err
+	}
+	_ = os.Remove(from)
+	return nil
 }
 
 func readScheduleFile(path string) (scheduleFile, error) {
